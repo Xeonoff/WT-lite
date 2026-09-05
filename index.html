@@ -664,15 +664,15 @@ function star(g,x,y,r,col){g.save();g.translate(x,y);g.beginPath();for(let i=0;i
 /* СХЕМА МАШИНЫ — ВИД СВЕРХУ (используется и в рентгене, и в панели статуса).
    Локальная ось X (вперёд) → вправо на экране, локальная Y (влево) → вверх. */
 function drawTopScheme(g,cx,cy,s,cls,tank,res,prog){
- const X=x=>cx+x*s, Y=y=>cy-y*s;
+ const X=x=>cx+x*s, Y=y=>cy+y*s;
  g.lineJoin="round";g.lineWidth=2;
- // гусеницы
+ // гусеницы (верхняя и нижняя ленты)
  g.fillStyle="rgba(140,155,170,.14)";g.strokeStyle="#7d8ea0";
- rr(g,X(-cls.L/2),Y(cls.W/2),cls.L*s,cls.tread*s,3);g.fill();g.stroke();
- rr(g,X(-cls.L/2),Y(-cls.W/2+cls.tread),cls.L*s,cls.tread*s,3);g.fill();g.stroke();
+ rr(g,X(-cls.L/2),Y(-cls.W/2),cls.L*s,cls.tread*s,3);g.fill();g.stroke();
+ rr(g,X(-cls.L/2),Y(cls.W/2-cls.tread),cls.L*s,cls.tread*s,3);g.fill();g.stroke();
  // корпус
  g.fillStyle="rgba(160,180,200,.08)";
- rr(g,X(-cls.L/2),Y(cls.W/2),cls.L*s,cls.W*s,5*s);g.fill();g.strokeStyle="#aebfd2";g.stroke();
+ rr(g,X(-cls.L/2),Y(-cls.W/2),cls.L*s,cls.W*s,5*s);g.fill();g.strokeStyle="#aebfd2";g.stroke();
  // ствол и башня
  g.strokeStyle="#aebfd2";g.lineWidth=Math.max(3,3.5*s*.9);
  g.beginPath();g.moveTo(X(cls.tOff+cls.tR*.4),Y(0));g.lineTo(X(cls.tOff+cls.tR+cls.barrel),Y(0));g.stroke();
@@ -682,9 +682,9 @@ function drawTopScheme(g,cx,cy,s,cls,tank,res,prog){
   g.fillStyle="#8fa0b2";g.font="11px Rubik";g.textAlign="center";
   g.fillText("НОС ▶",X(cls.L/2+20),Y(0)+4);
   g.fillText("КОРМА",X(-cls.L/2-22),Y(0)+4);
-  g.fillText("лоб "+cls.armor.front+" мм",X(cls.L/2-10),Y(cls.W/2)+16);
-  g.fillText("корма "+cls.armor.rear+" мм",X(-cls.L/2+14),Y(cls.W/2)+16);
-  g.fillText("борт "+cls.armor.side+" мм",X(0),Y(-cls.W/2)-8);}
+  g.fillText("лоб "+cls.armor.front+" мм",X(cls.L/2-10),Y(-cls.W/2)-8);
+  g.fillText("корма "+cls.armor.rear+" мм",X(-cls.L/2+14),Y(-cls.W/2)-8);
+  g.fillText("борт "+cls.armor.side+" мм",X(0),Y(cls.W/2)+16);}
  // модули
  for(const md of cls.schema.mods){
   const inst=tank?tank.mods[md.t]:null;
