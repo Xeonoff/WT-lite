@@ -115,6 +115,34 @@ button.ghost:hover{border-color:var(--brass);color:var(--brass);transform:transl
 .orow{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed rgba(150,162,110,.25);font-size:15px}
 .orow b{font-family:"Russo One";font-weight:400;color:var(--brass)}
 .obox .btnrow{margin-top:26px}
+#crewRow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+.crew{background:rgba(10,12,7,.5);border:1px solid rgba(150,162,110,.25);padding:4px 2px 3px;text-align:center;position:relative}
+.crew .cdot{width:12px;height:12px;border-radius:50%;margin:2px auto 0;background:#57d977}
+.crew .cname{font-family:"Russo One";font-size:10px;letter-spacing:.06em;margin-top:2px}
+.crew .chp{height:3px;background:#151810;margin:3px 4px 1px}
+.crew .chp i{display:block;height:100%;width:100%;background:#57d977}
+.crew.warn .cdot,.crew.warn .chp i{background:#ffd23f}
+.crew.bad .cdot,.crew.bad .chp i{background:#ff5147}
+.crew.dead::after{content:"✕";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ff5147;font:700 20px "Russo One";text-shadow:0 0 6px #000}
+#modRow{display:flex;gap:5px;margin-top:6px}
+.mod{flex:1;font-family:"Russo One";font-size:9.5px;text-align:center;padding:4px 2px;border:1px solid rgba(150,162,110,.25);background:rgba(10,12,7,.5);letter-spacing:.04em}
+.mod i{display:block;width:9px;height:9px;border-radius:2px;margin:0 auto 3px;background:#57d977}
+.mod.warn i{background:#ffd23f}
+.mod.bad i{background:#ff5147}
+.mod.bad{animation:blinker 1s infinite}
+@keyframes blinker{50%{border-color:#ff5147;box-shadow:0 0 8px rgba(255,81,71,.5)}}
+#consRow{display:flex;gap:6px;margin-top:8px}
+.cons{flex:1;position:relative;background:rgba(10,12,7,.55);border:1px solid rgba(150,162,110,.3);padding:15px 4px 5px;text-align:center;overflow:hidden}
+.cons .key{position:absolute;top:2px;left:4px;font-family:"Russo One";font-size:10px;color:#0f120a;background:var(--brass);padding:0 4px}
+.cons .nm{font-family:"Russo One";font-size:9px;letter-spacing:.05em;color:#b9c29d;position:relative;z-index:2}
+.cons .cfill{position:absolute;left:0;bottom:0;height:100%;width:0%;background:rgba(224,178,62,.28);z-index:1}
+.cons.active{border-color:var(--brass)}
+.cons.readyF{border-color:#ff8c42;box-shadow:0 0 10px rgba(255,140,66,.45);animation:blinker .7s infinite}
+.cons .cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:"Russo One";font-size:13px;color:#ffd23f;z-index:2}
+#alerts{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.alert{font-family:"Russo One";font-size:11px;padding:3px 8px;letter-spacing:.08em}
+.alert.fire{background:#7a2018;color:#ffd2c0;border:1px solid #ff5147;animation:blinker .7s infinite}
+.alert.bad{background:#3a3a12;color:#ffe9b0;border:1px solid #ffd23f}
 </style>
 </head>
 <body>
@@ -137,15 +165,22 @@ button.ghost:hover{border-color:var(--brass);color:var(--brass);transform:transl
     </div>
   </div>
   <div id="bl" class="panel cut">
-    <div class="hd"><b>Т-34-76 · СОСТОЯНИЕ МАШИНЫ</b><span>ВИД СВЕРХУ</span></div>
-    <canvas id="panelCv" width="528" height="264"></canvas>
-    <div id="repInfo"></div>
-    <div class="legend">
-      <span><i style="background:var(--ok)"></i>исправен</span>
-      <span><i style="background:var(--warn)"></i>повреждён</span>
-      <span><i style="background:var(--bad)"></i>уничтожен</span>
-    </div>
+  <div class="hd"><b>Т-34-76 · СОСТОЯНИЕ МАШИНЫ</b><span>ВИД СВЕРХУ</span></div>
+  <canvas id="panelCv" width="528" height="264"></canvas>
+  <div id="crewRow"></div>
+  <div id="modRow"></div>
+  <div id="consRow">
+    <div class="cons" id="consR"><span class="key">R</span><span class="nm">РЕМОНТ</span><div class="cfill" id="consRf"></div></div>
+    <div class="cons" id="consT"><span class="key">T</span><span class="nm">ЭКИПАЖ</span><div class="cfill" id="consTf"></div></div>
+    <div class="cons" id="consF"><span class="key">F</span><span class="nm">ОГНЕТУШ.</span><div class="cfill" id="consFf"></div><span class="cd" id="consFt"></span></div>
   </div>
+  <div id="alerts"></div>
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>исправен</span>
+    <span><i style="background:var(--warn)"></i>повреждён</span>
+    <span><i style="background:var(--bad)"></i>уничтожен</span>
+  </div>
+</div>
   <div id="hint" class="panel cut"><b>WASD</b> движение · <b>ЛКМ</b> огонь · <b>1/2/3</b> снаряды · колесо — переключ.<br><b>R</b> ремонт модулей · <b>T</b> лечение экипажа · <b>F</b> огнетушитель · <b>ESC</b> пауза · <b>M</b> звук</div>
 </div>
 <div id="vign"></div><div id="firev"></div>
@@ -217,6 +252,7 @@ button.ghost:hover{border-color:var(--brass);color:var(--brass);transform:transl
 <script>
 "use strict";
 /* ================= УТИЛИТЫ ================= */
+let crewCells={},modCells={};
 const TAU=Math.PI*2, rnd=(a=1,b)=>b===undefined?Math.random()*a:a+Math.random()*(b-a),
 clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t, dist=(x1,y1,x2,y2)=>Math.hypot(x2-x1,y2-y1),
 angDiff=(a,b)=>{let d=(b-a)%TAU;if(d>Math.PI)d-=TAU;if(d<-Math.PI)d+=TAU;return d;};
@@ -228,8 +264,19 @@ function segPt(px,py,qx,qy,x,y){const dx=qx-px,dy=qy-py,l2=dx*dx+dy*dy||1e-6;let
 /* ================= ЗВУК ================= */
 let AC=null,master,muted=false,engOsc=null,engGain=null,engFilt=null;
 function initAudio(){if(AC)return;try{AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=.5;master.connect(AC.destination);
-engOsc=AC.createOscillator();engOsc.type="sawtooth";const o2=AC.createOscillator();o2.type="square";engFilt=AC.createBiquadFilter();engFilt.type="lowpass";engFilt.frequency.value=220;
-engGain=AC.createGain();engGain.gain.value=0;engOsc.connect(engFilt);o2.connect(engFilt);engFilt.connect(engGain);engGain.connect(master);engOsc.start();o2.start();engOsc._o2=o2;}catch(e){}}
+// двигатель: низкая пила + субоктава через два лоупасса = глухой дизельный гул
+engOsc=AC.createOscillator();engOsc.type="sawtooth";
+const o2=AC.createOscillator();o2.type="sawtooth";
+engFilt=AC.createBiquadFilter();engFilt.type="lowpass";engFilt.frequency.value=110;engFilt.Q.value=.5;
+const f2=AC.createBiquadFilter();f2.type="lowpass";f2.frequency.value=330;f2.Q.value=.4;
+engGain=AC.createGain();engGain.gain.value=0;
+const g2=AC.createGain();g2.gain.value=.65;
+engOsc.connect(engFilt);o2.connect(g2);g2.connect(engFilt);engFilt.connect(f2);f2.connect(engGain);engGain.connect(master);
+// "чук-чук" дизеля: квадратный LFO подрабатывает громкость
+const lfo=AC.createOscillator();lfo.type="square";lfo.frequency.value=9;
+const lfoG=AC.createGain();lfoG.gain.value=.022;lfo.connect(lfoG);lfoG.connect(engGain.gain);
+engOsc.start();o2.start();lfo.start();
+engOsc._o2=o2;engOsc._lfo=lfo;}catch(e){}}
 function nzBuf(sec){const b=AC.createBuffer(1,AC.sampleRate*sec,AC.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;return b;}
 let nzShort=null;
 function sfx(type,vol=1,pitch=1){if(!AC||muted)return;vol=clamp(vol,0,1);const t=AC.currentTime;const g=AC.createGain();g.connect(master);
@@ -243,8 +290,13 @@ function sfx(type,vol=1,pitch=1){if(!AC||muted)return;vol=clamp(vol,0,1);const t
   const o=AC.createOscillator();o.type="sine";o.frequency.setValueAtTime(type==="det"?90:65,t);o.frequency.exponentialRampToValueAtTime(24,t+.7);const g2=AC.createGain();g2.gain.setValueAtTime(.6*vol,t);g2.gain.exponentialRampToValueAtTime(.001,t+.8);o.connect(g2);g2.connect(master);o.start(t);o.stop(t+.9);}
  else if(type==="click"){const o=AC.createOscillator();o.type="square";o.frequency.value=880;g.gain.setValueAtTime(.08,t);g.gain.exponentialRampToValueAtTime(.001,t+.06);o.connect(g);o.start(t);o.stop(t+.07);}
  else if(type==="repair"){const o=AC.createOscillator();o.type="triangle";o.frequency.setValueAtTime(440,t);o.frequency.linearRampToValueAtTime(660,t+.15);g.gain.setValueAtTime(.07,t);g.gain.exponentialRampToValueAtTime(.001,t+.2);o.connect(g);o.start(t);o.stop(t+.22);}}
-function updEngine(spd){if(!AC||!engGain)return;const v=(state==="play"||state==="over")?clamp(Math.abs(spd)/160,0,1):0;engGain.gain.setTargetAtTime(muted?0:(.05+v*.09),AC.currentTime,.1);
- engOsc.frequency.setTargetAtTime(34+v*62,AC.currentTime,.15);engOsc._o2.frequency.setTargetAtTime(17+v*31,AC.currentTime,.15);engFilt.frequency.setTargetAtTime(180+v*420,AC.currentTime,.1);}
+function updEngine(spd){if(!AC||!engGain)return;
+ const v=(state==="play"||state==="over")?clamp(Math.abs(spd)/160,0,1):0;
+ engGain.gain.setTargetAtTime(muted?0:(.035+v*.085),AC.currentTime,.12);
+ engOsc.frequency.setTargetAtTime(26+v*34,AC.currentTime,.15);    // 26–60 Гц
+ engOsc._o2.frequency.setTargetAtTime(13+v*17,AC.currentTime,.15);// субоктава
+ engFilt.frequency.setTargetAtTime(85+v*150,AC.currentTime,.2);   // срез — глухо
+ engOsc._lfo.frequency.setTargetAtTime(8+v*18,AC.currentTime,.2);} // стрекот 8–26 Гц
 
 /* ================= ВВОД ================= */
 const keys={},mouse={x:innerWidth/2,y:innerHeight/2,down:false};
@@ -877,15 +929,15 @@ function render(){
 
 const pctx=$("panelCv").getContext("2d");
 function drawPanel(){if(!player)return;pctx.setTransform(2,0,0,2,0,0);pctx.clearRect(0,0,264,132);
- drawTopScheme(pctx,112,66,1.28,player.cls,player,null,null);
- pctx.font="10px Rubik";pctx.textAlign="left";
- let x=6,y=12;const st=[];
- if(player.burning>0)st.push(["ПОЖАР","#ff5147"]);
- if(player.mods.engine.hp<=0)st.push(["ОБЕЗДВИЖЕН","#ff5147"]);
- if(player.mods.gun.hp<=0)st.push(["ОРУДИЕ ВЫБИТО","#ff5147"]);
- if(player.repair)st.push(["РЕМОНТ…","#ffd23f"]);
- if(player.fext>0)st.push(["ОГНЕТУШИТЕЛЬ: "+Math.ceil(player.fext)+"с","#8fa0b2"]);
- for(const [txt,c] of st){pctx.fillStyle=c;pctx.fillText(txt,x,y);y+=12;}}
+ drawTopScheme(pctx,112,66,1.28,player.cls,player,null,null);}
+//  pctx.font="10px Rubik";pctx.textAlign="left";
+//  let x=6,y=12;const st=[];
+//  if(player.burning>0)st.push(["ПОЖАР","#ff5147"]);
+//  if(player.mods.engine.hp<=0)st.push(["ОБЕЗДВИЖЕН","#ff5147"]);
+//  if(player.mods.gun.hp<=0)st.push(["ОРУДИЕ ВЫБИТО","#ff5147"]);
+//  if(player.repair)st.push(["РЕМОНТ…","#ffd23f"]);
+//  if(player.fext>0)st.push(["ОГНЕТУШИТЕЛЬ: "+Math.ceil(player.fext)+"с","#8fa0b2"]);
+//  for(const [txt,c] of st){pctx.fillStyle=c;pctx.fillText(txt,x,y);y+=12;}}
 
 /* ================= HUD ================= */
 const shellsBox=$("shells");
@@ -906,8 +958,43 @@ function updHUD(dt){hudT-=dt;if(hudT>0)return;hudT=.1;
  $("rtext").textContent=p.mods.gun.hp<=0?"ОРУДИЕ ВЫВЕДЕНО — ремонт (R)":
   p.reload>0?p.reload.toFixed(1)+" с":("ГОТОВ · "+SHELLS[curShell].name);
  $("rLbl").textContent=SHELLS[curShell].name;
- $("repInfo").textContent=p.repair?("Ремонт: "+MNAMES[p.repair.target]+" "+Math.round(p.repair.t/p.repair.dur*100)+"%"):"";}
+ syncDamagePanel();}
 
+const CREW_SHORT={driver:"МЕХ",gunner:"НАВ",loader:"ЗАР",commander:"КМД"};
+const MOD_LIST=[["engine","ДВИГ"],["gun","ОРУД"],["ring","ПОГОН"],["ammo","БК"],["fuel","ТОПЛ"]];
+function buildDamagePanel(){
+ const cr=$("crewRow");cr.innerHTML="";crewCells={};
+ player.cls.schema.mods.filter(m=>["driver","gunner","loader","commander"].includes(m.t)).forEach(m=>{
+  const d=document.createElement("div");d.className="crew";d.title=MNAMES[m.t];
+  d.innerHTML=`<div class="cdot"></div><div class="cname">${CREW_SHORT[m.t]}</div><div class="chp"><i></i></div>`;
+  cr.appendChild(d);crewCells[m.t]=d;});
+ const mr=$("modRow");mr.innerHTML="";modCells={};
+ MOD_LIST.forEach(([k,n])=>{const d=document.createElement("div");d.className="mod";d.title=MNAMES[k];
+  d.innerHTML=`<i></i>${n}`;mr.appendChild(d);modCells[k]=d;});}
+
+function syncDamagePanel(){const p=player;if(!p)return;
+ for(const k in crewCells){const m=p.mods[k],el=crewCells[k];
+  el.querySelector(".chp i").style.width=(m.hp/m.max*100)+"%";
+  el.className="crew "+(m.hp<=0?"bad dead":(m.hp<m.max*.6?"warn":""));
+  el.title=MNAMES[k]+": "+(m.hp<=0?"убит":Math.round(m.hp)+" / "+m.max);}
+ for(const k in modCells){const m=p.mods[k],el=modCells[k];
+  el.className="mod "+(m.hp<=0?"bad":(m.hp<m.max*.6?"warn":""));
+  el.title=MNAMES[k]+": "+Math.round(m.hp)+" / "+m.max;}
+ let html="";
+ if(p.burning>0)html+=`<span class="alert fire">ПОЖАР — ЖМИ [F]</span>`;
+ if(p.mods.engine.hp<=0)html+=`<span class="alert bad">ОБЕЗДВИЖЕН</span>`;
+ else if(p.mods.driver.hp<=0)html+=`<span class="alert bad">НЕТ МЕХВОДА</span>`;
+ if(p.mods.gun.hp<=0)html+=`<span class="alert bad">НЕТ ОРУДИЯ</span>`;
+ $("alerts").innerHTML=html;
+ $("consR").classList.toggle("active",!!(p.repair&&p.repair.kind==="module"));
+ $("consRf").style.width=(p.repair&&p.repair.kind==="module")?(p.repair.t/p.repair.dur*100)+"%":"0%";
+ $("consT").classList.toggle("active",!!(p.repair&&p.repair.kind==="crew"));
+ $("consTf").style.width=(p.repair&&p.repair.kind==="crew")?(p.repair.t/p.repair.dur*100)+"%":"0%";
+ const fReady=p.fext<=0;
+ $("consFf").style.width=fReady?"0%":(p.fext/9*100)+"%";
+ $("consF").classList.toggle("readyF",p.burning>0&&fReady);
+ $("consFt").textContent=fReady?"":Math.ceil(p.fext)+"с";}
+ 
 /* ================= ЦИКЛ (с защитой от падения) ================= */
 let errShown=false,last=performance.now();
 function loop(now){requestAnimationFrame(loop);
@@ -928,6 +1015,7 @@ requestAnimationFrame(loop);
 /* ================= ЗАПУСК / ЭКРАНЫ ================= */
 function startGame(){initAudio();genWorld();
  player=mkTank("med",WORLD/2,WORLD/2,true);
+ buildDamagePanel();
  enemies=[];shells=[];parts=[];debris=[];floaters=[];spawnQ=[];tracks=[];wave=0;kills=0;pens=0;score=0;overT=0;gameT=0;
  $("feed").innerHTML="";$("hud").classList.add("on");
  $("menu").classList.add("hidden");$("over").classList.add("hidden");$("pause").classList.add("hidden");
