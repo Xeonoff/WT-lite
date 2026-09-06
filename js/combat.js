@@ -74,20 +74,20 @@ export function damageModules(tank, hits, byPlayer) {
       if (h.t === "engine")
         addFeed(
           (tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") +
-            "двигатель уничтожен",
+          "двигатель уничтожен",
           "warn"
         );
       if (h.t === "gun")
         addFeed(
           (tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") +
-            "орудие выведено",
+          "орудие выведено",
           "warn"
         );
       if (["driver", "gunner", "loader", "commander"].includes(h.t))
         addFeed(
           (tank.isPlayer ? "" : "«" + tank.cls.name + "»: ") +
-            MNAMES[h.t] +
-            ": выведен из строя",
+          MNAMES[h.t] +
+          ": выведен из строя",
           "warn"
         );
     }
@@ -127,7 +127,7 @@ export function detonate(tank, byPlayer) {
   slowmo(0.55);
   addFeed(
     (tank.isPlayer ? "ВАША МАШИНА" : "«" + tank.cls.name + "»") +
-      ": детонация боеукладки!",
+    ": детонация боеукладки!",
     "bad"
   );
   scorched(tank.x, tank.y, 46);
@@ -186,8 +186,8 @@ export function computeImpact(shell, tank) {
     nx /= nl; ny /= nl;
     px = -ny; py = nx;
   } else if (Math.abs(raw.x) / (c.L / 2) >= Math.abs(raw.y) / (c.W / 2)) {
-    plate = raw.x > 0 ? "корма" : "лоб";
-    armor = raw.x > 0 ? c.armor.rear : c.armor.front;
+    plate = raw.x > 0 ? "лоб" : "корма";
+    armor = raw.x > 0 ? c.armor.front : c.armor.rear;
     px = 0; py = 1;
   } else {
     plate = "борт";
@@ -271,7 +271,7 @@ export function hitResultFx(shell, tank, res) {
       showXR(
         "РИКОШЕТ",
         "Зона: " + res.plate + " · угол встречи " + res.meetDeg +
-          "° — скользящий удар, снаряд отброшен",
+        "° — скользящий удар, снаряд отброшен",
         shell.name + " · " + tank.cls.name,
         tank, res, "rico"
       );
@@ -285,8 +285,8 @@ export function hitResultFx(shell, tank, res) {
       showXR(
         "СНАРЯД НЕ ПРОБИЛ",
         "Зона: " + res.plate + " · угол встречи " + res.meetDeg +
-          "° · приведённая броня " + Math.round(res.eff) +
-          " мм против пробития " + Math.round(shell.pen) + " мм",
+        "° · приведённая броня " + Math.round(res.eff) +
+        " мм против пробития " + Math.round(shell.pen) + " мм",
         shell.name + " · " + tank.cls.name,
         tank, res, "nofrag"
       );
@@ -301,8 +301,8 @@ export function hitResultFx(shell, tank, res) {
       showXR(
         "ФУГАСНЫЙ ПОДРЫВ",
         evSub(res.hits) +
-          "<br><span style='color:#8fa0b2'>Зона: " + res.plate +
-          " · приведённая " + Math.round(res.eff) + " мм</span>",
+        "<br><span style='color:#8fa0b2'>Зона: " + res.plate +
+        " · приведённая " + Math.round(res.eff) + " мм</span>",
         shell.name + " · " + tank.cls.name,
         tank, res, "he"
       );
@@ -319,10 +319,10 @@ export function hitResultFx(shell, tank, res) {
       showXR(
         ev === "det" ? "ДЕТОНАЦИЯ!" : "ПРОБИТИЕ",
         evSub(res.hits) +
-          "<br><span style='color:#8fa0b2'>Зона: " + res.plate +
-          " · угол встречи " + res.meetDeg + "° · приведённая " +
-          Math.round(res.eff) + " мм · заброневое " +
-          Math.round(res.res) + " мм</span>",
+        "<br><span style='color:#8fa0b2'>Зона: " + res.plate +
+        " · угол встречи " + res.meetDeg + "° · приведённая " +
+        Math.round(res.eff) + " мм · заброневое " +
+        Math.round(res.res) + " мм</span>",
         shell.name + " · " + tank.cls.name,
         tank, res, "pen"
       );
