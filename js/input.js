@@ -8,7 +8,7 @@ import {
 } from "./hud.js";
 
 export const keys = {};
-export const mouse = { x: innerWidth / 2, y: innerHeight / 2, down: false };
+export const mouse = { x: innerWidth / 2, y: innerHeight / 2, down: false, right: false };
 
 addEventListener("keydown", (e) => {
     keys[e.code] = true;
@@ -35,9 +35,11 @@ addEventListener("mousemove", (e) => {
 });
 addEventListener("mousedown", (e) => {
     if (e.button === 0) mouse.down = true;
+    if (e.button === 2) { mouse.right = true; G.zoomTarget = 0.75; }
 });
 addEventListener("mouseup", (e) => {
     if (e.button === 0) mouse.down = false;
+    if (e.button === 2) { mouse.right = false; G.zoomTarget = 1; }
 });
 addEventListener("wheel", (e) => {
     if (G.state === "play" && G.player) {

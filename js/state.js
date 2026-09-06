@@ -2,6 +2,11 @@ import { WORLD } from "./data.js";
 import { mkCv } from "./utils.js";
 
 export const G = {
+    zoom: 1,
+    zoomTarget: 1,
+    warnTxt: "",
+    warnCol: "#ffd23f",
+    warnT: 0,
     selectedTank: null,
     state: "menu",
     wave: 0,

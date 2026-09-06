@@ -4,7 +4,7 @@ import { rnd, clamp, dist, segPt } from "./utils.js";
 import {
   turretPos, tankRadius, reloadTime, dispersion, toLocal, crewAlive,
 } from "./entities.js";
-import { sfx } from "./audio.js";
+import { sfx, sfxMissileFly } from "./audio.js";
 import { sparks, boom } from "./effects.js";
 import { scorched } from "./world.js";
 import { addFeed, floater, showXR } from "./hud.js";
@@ -21,8 +21,9 @@ export function fire(t, ang, shellDef) {
     dx: Math.cos(a), dy: Math.sin(a),
     spd: shellDef.spd, pen: shellDef.pen, dmg: shellDef.dmg,
     he: shellDef.type === "ОФ",
+    guided: shellDef.guided === true,
     col: shellDef.col, name: shellDef.name,
-    life: 1.15, own: t.isPlayer ? "p" : "e",
+    life: shellDef.life || 1.15, own: t.isPlayer ? "p" : "e",
     tank: t, ang: a,
   });
 
@@ -55,7 +56,11 @@ export function fire(t, ang, shellDef) {
     vol = clamp(1 - dist(bx, by, G.player.x, G.player.y) / 1400, 0.08, 0.6);
   else vol = 0.4;
 
-  sfx("shoot", vol, t.isPlayer ? 1 : 0.85);
+  if (shellDef.guided) {
+    sfxMissileFly(shellDef.life || 4, vol);
+  } else {
+    sfx("shoot", vol, t.isPlayer ? 1 : 0.85);
+  }
   if (t.isPlayer) G.shake += 7;
 }
 
@@ -71,25 +76,25 @@ export function damageModules(tank, hits, byPlayer) {
         detonate(tank, byPlayer);
         return "det";
       }
+      if (tank.isPlayer) {
+        const warnNames = {
+          engine: "ДВИГАТЕЛЬ ВЫБИТ",
+          gun: "ОРУДИЕ ВЫБИТ",
+          driver: "МЕХВОД УБИТ",
+          gunner: "НАВОДЧИК УБИТ",
+          loader: "ЗАРЯЖАЮЩИЙ УБИТ",
+          commander: "КОМАНДИР УБИТ",
+          ring: "ПОГОН СЛОМАН",
+          fuel: "БАК ПРОБИТ",
+        };
+        if (warnNames[h.t]) warnBreak(warnNames[h.t], "#ff5147");
+      }
       if (h.t === "engine")
-        addFeed(
-          (tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") +
-          "двигатель уничтожен",
-          "warn"
-        );
+        addFeed((tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") + "двигатель уничтожен", "warn");
       if (h.t === "gun")
-        addFeed(
-          (tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") +
-          "орудие выведено",
-          "warn"
-        );
+        addFeed((tank.isPlayer ? "Ваша машина: " : "«" + tank.cls.name + "»: ") + "орудие выведено", "warn");
       if (["driver", "gunner", "loader", "commander"].includes(h.t))
-        addFeed(
-          (tank.isPlayer ? "" : "«" + tank.cls.name + "»: ") +
-          MNAMES[h.t] +
-          ": выведен из строя",
-          "warn"
-        );
+        addFeed((tank.isPlayer ? "" : "«" + tank.cls.name + "»: ") + MNAMES[h.t] + ": выведен из строя", "warn");
     }
     if (
       (h.t === "fuel" || h.t === "engine") &&
@@ -97,6 +102,7 @@ export function damageModules(tank, hits, byPlayer) {
       rnd() < 0.33
     ) {
       tank.burning = rnd(4, 7);
+      if (tank.isPlayer) warnBreak("ПОЖАР", "#ff8c42");
       addFeed(
         tank.isPlayer ? "ПОЖАР В МАШИНЕ!" : "Противник горит",
         tank.isPlayer ? "bad" : "good"
@@ -222,7 +228,7 @@ export function computeImpact(shell, tank) {
     };
   }
 
-  if (meetAng < 0.436 && rnd() < 0.75) {
+  if (!shell.guided && meetAng < 0.436 && rnd() < 0.75) {
     const sg = dlx * px + dly * py >= 0 ? 1 : -1;
     return {
       type: "rico", ang: meetAng, meetDeg, eff, plate,
@@ -349,7 +355,11 @@ export function markHit(t, c) {
   G.markCol = c;
   G.markT = 0.8;
 }
-
+export function warnBreak(txt, col = "#ff5147") {
+  G.warnTxt = txt;
+  G.warnCol = col;
+  G.warnT = 1.6;
+}
 export function slowmo(t) {
   G.slowT = Math.max(G.slowT, t);
 }

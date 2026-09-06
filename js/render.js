@@ -1,5 +1,5 @@
 import { G } from "./state.js";
-import { WORLD } from "./data.js";
+import { WORLD, VIEW_H } from "./data.js";
 import { clamp, star, modStateColor } from "./utils.js";
 import { turretPos, tankRadius, dispersion, reloadTime } from "./entities.js";
 import { getTerrainPat } from "./world.js";
@@ -20,6 +20,7 @@ export function resize() {
 }
 addEventListener("resize", resize);
 resize();
+const SHADOW_DX = 6, SHADOW_DY = 8;
 
 export function drawTopScheme(g, cx, cy, s, cls, tank, res, prog) {
   const X = (x) => cx + x * s;
@@ -236,23 +237,43 @@ export function drawTopScheme(g, cx, cy, s, cls, tank, res, prog) {
 
 export function drawTank(g, t, alpha = 1) {
   const c = t.cls;
+  const tp = turretPos(t);
+
+  // Тень корпуса — фиксированное направление
   g.save();
-  g.translate(t.x, t.y);
   g.globalAlpha = alpha;
-  g.save();
+  g.translate(t.x + SHADOW_DX, t.y + SHADOW_DY);
   g.rotate(t.a);
   g.fillStyle = "rgba(0,0,0,.28)";
   g.beginPath();
-  g.rect(-c.L / 2 + 3, -c.W / 2 + 4, c.L, c.W);
+  g.rect(-c.L / 2, -c.W / 2, c.L, c.W);
   g.fill();
   g.restore();
 
+  // Тень башни / пусковой — фиксированное направление
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(tp.x + SHADOW_DX, tp.y + SHADOW_DY);
+  g.rotate(t.ta);
+  g.fillStyle = "rgba(0,0,0,.25)";
+  if (c.launcher) {
+    g.fillRect(-8, -9, 22, 18);
+  } else {
+    g.beginPath();
+    g.arc(0, 0, c.tR, 0, 6.283);
+    g.fill();
+  }
+  g.restore();
+
+  // Корпус
+  g.save();
+  g.translate(t.x, t.y);
+  g.globalAlpha = alpha;
   g.rotate(t.a);
   const w = c.W, ww = c.tread;
   g.fillStyle = "#2c2f24";
   g.beginPath(); g.rect(-c.L / 2, -w / 2, c.L, ww); g.fill();
   g.beginPath(); g.rect(-c.L / 2, w / 2 - ww, c.L, ww); g.fill();
-
   g.strokeStyle = "rgba(0,0,0,.5)";
   g.lineWidth = 1.5;
   const off = ((t.trackDist % 8) + 8) % 8;
@@ -280,37 +301,48 @@ export function drawTank(g, t, alpha = 1) {
   g.stroke();
   g.restore();
 
-  const tp = turretPos(t);
+  // Башня / пусковая установка
   g.save();
   g.translate(tp.x, tp.y);
+  g.globalAlpha = alpha;
   g.rotate(t.ta);
-  g.fillStyle = "rgba(0,0,0,.25)";
-  g.beginPath();
-  g.arc(2, 2, c.tR, 0, 6.283);
-  g.fill();
-  const bl = c.barrel * (1 - 0.13 * t.recoil);
-  const bw = c.tR > 16 ? 7 : 6;
-  g.fillStyle = c.barrelCol;
-  g.fillRect(c.tR * 0.3, -bw / 2, bl, bw);
-  g.strokeStyle = "rgba(0,0,0,.35)";
-  g.lineWidth = 1;
-  g.strokeRect(c.tR * 0.3, -bw / 2, bl, bw);
-  g.fillStyle = c.barrelCol;
-  g.fillRect(c.tR * 0.3 + bl - 4, -bw / 2 - 1.6, 5, bw + 3.2);
-  g.fillStyle = c.tur;
-  g.beginPath();
-  g.arc(0, 0, c.tR, 0, 6.283);
-  g.fill();
-  g.strokeStyle = c.bodyD;
-  g.lineWidth = 2;
-  g.stroke();
-  g.fillStyle = c.bodyD;
-  g.fillRect(c.tR * 0.45, -7, 10, 14);
-  g.fillStyle = c.bodyD;
-  g.beginPath();
-  g.arc(-c.tR * 0.25, c.tR * 0.3, c.tR * 0.3, 0, 6.283);
-  g.fill();
-  if (t.isPlayer) star(g, 0, -c.tR * 0.35, c.tR * 0.42, "#d8e6c8");
+  if (c.launcher) {
+    g.fillStyle = c.tur;
+    g.fillRect(-8, -9, 22, 18);
+    g.strokeStyle = c.bodyD;
+    g.lineWidth = 1.5;
+    g.strokeRect(-8, -9, 22, 18);
+    const rl = c.barrel * (1 - 0.1 * t.recoil);
+    g.fillStyle = c.barrelCol;
+    g.fillRect(0, -7, rl, 4);
+    g.fillRect(0, -2, rl, 4);
+    g.fillRect(0, 3, rl, 4);
+    if (t.isPlayer) star(g, -3, 0, 6, "#d8e6c8");
+  } else {
+    const bl = c.barrel * (1 - 0.13 * t.recoil);
+    const bw = c.tR > 16 ? 7 : 6;
+    g.fillStyle = c.barrelCol;
+    g.fillRect(c.tR * 0.3, -bw / 2, bl, bw);
+    g.strokeStyle = "rgba(0,0,0,.35)";
+    g.lineWidth = 1;
+    g.strokeRect(c.tR * 0.3, -bw / 2, bl, bw);
+    g.fillStyle = c.barrelCol;
+    g.fillRect(c.tR * 0.3 + bl - 4, -bw / 2 - 1.6, 5, bw + 3.2);
+    g.fillStyle = c.tur;
+    g.beginPath();
+    g.arc(0, 0, c.tR, 0, 6.283);
+    g.fill();
+    g.strokeStyle = c.bodyD;
+    g.lineWidth = 2;
+    g.stroke();
+    g.fillStyle = c.bodyD;
+    g.fillRect(c.tR * 0.45, -7, 10, 14);
+    g.fillStyle = c.bodyD;
+    g.beginPath();
+    g.arc(-c.tR * 0.25, c.tR * 0.3, c.tR * 0.3, 0, 6.283);
+    g.fill();
+    if (t.isPlayer) star(g, 0, -c.tR * 0.35, c.tR * 0.42, "#d8e6c8");
+  }
   g.restore();
 
   if (!t.isPlayer) {
@@ -350,7 +382,7 @@ export function drawWreck(g, w) {
   g.fillStyle = "#11130e";
   g.fillRect(-c.L / 2, -c.W / 2, c.L, c.tread);
   g.fillRect(-c.L / 2, c.W / 2 - c.tread, c.L, c.tread);
-  if (!w.noTurret) {
+  if (!w.noTurret && !c.launcher) {
     g.rotate(w.ta - w.a);
     g.beginPath();
     g.arc(0, 0, c.tR, 0, 6.283);
@@ -409,18 +441,61 @@ export function drawPanel() {
   pctx.clearRect(0, 0, 264, 132);
   drawTopScheme(pctx, 112, 66, 1.28, G.player.cls, G.player, null, null);
 }
-
+export function drawTankPreview(g, cls, w, h) {
+  g.clearRect(0, 0, w, h);
+  const leftEdge = -cls.L / 2;
+  const rightEdge = cls.barrel;
+  const spanW = rightEdge - leftEdge;
+  const scale = Math.min((w - 16) / spanW, (h - 14) / cls.W);
+  g.save();
+  g.translate(w / 2 - ((leftEdge + rightEdge) / 2) * scale, h / 2);
+  g.scale(scale, scale);
+  const ww = cls.tread;
+  g.fillStyle = "#2c2f24";
+  g.fillRect(-cls.L / 2, -cls.W / 2, cls.L, ww);
+  g.fillRect(-cls.L / 2, cls.W / 2 - ww, cls.L, ww);
+  g.fillStyle = cls.body;
+  g.fillRect(-cls.L / 2 + 2, -cls.W / 2 + ww - 1, cls.L - 4, cls.W - 2 * ww + 2);
+  g.strokeStyle = cls.bodyD;
+  g.lineWidth = 2 / scale;
+  g.strokeRect(-cls.L / 2 + 2, -cls.W / 2 + ww - 1, cls.L - 4, cls.W - 2 * ww + 2);
+  if (cls.launcher) {
+    g.fillStyle = cls.tur;
+    g.fillRect(cls.tOff - 8, -9, 22, 18);
+    g.fillStyle = cls.barrelCol;
+    g.fillRect(cls.tOff, -7, cls.barrel, 4);
+    g.fillRect(cls.tOff, -2, cls.barrel, 4);
+    g.fillRect(cls.tOff, 3, cls.barrel, 4);
+  } else {
+    g.fillStyle = cls.barrelCol;
+    g.fillRect(cls.tOff + cls.tR * 0.3, -3, cls.barrel, 6);
+    g.fillStyle = cls.tur;
+    g.beginPath();
+    g.arc(cls.tOff, 0, cls.tR, 0, 6.283);
+    g.fill();
+    g.strokeStyle = cls.bodyD;
+    g.lineWidth = 2 / scale;
+    g.stroke();
+  }
+  g.restore();
+}
 export function render() {
+  const sc = getScale();
+  const halfW = VW / (2 * sc);   // видимая полуширина мира
+  const halfH = VH / (2 * sc);   // видимая полувысота мира
+  const M = 80;                   // запас в мировых единицах
   ctx.clearRect(0, 0, VW, VH);
   ctx.save();
-  ctx.translate(VW / 2 - G.CAM.x + G.shX, VH / 2 - G.CAM.y + G.shY);
+  ctx.translate(VW / 2 + G.shX, VH / 2 + G.shY);
+  ctx.scale(sc, sc);
+  ctx.translate(-G.CAM.x, -G.CAM.y);
   ctx.fillStyle = getTerrainPat(ctx);
-  ctx.fillRect(G.CAM.x - VW / 2 - 60, G.CAM.y - VH / 2 - 60, VW + 120, VH + 120);
+  ctx.fillRect(G.CAM.x - halfW - M, G.CAM.y - halfH - M, halfW * 2 + M * 2, halfH * 2 + M * 2);
   ctx.drawImage(decals, 0, 0, decals.width, decals.height, 0, 0, WORLD, WORLD);
 
   ctx.lineCap = "butt";
   for (const m of G.tracks) {
-    if (Math.abs(m.x - G.CAM.x) > VW / 2 + 30 || Math.abs(m.y - G.CAM.y) > VH / 2 + 30)
+    if (Math.abs(m.x - G.CAM.x) > halfW + M || Math.abs(m.y - G.CAM.y) > halfH + M)
       continue;
     const a = (1 - m.t / m.life) * 0.2;
     ctx.strokeStyle = `rgba(30,32,20,${a.toFixed(3)})`;
@@ -435,7 +510,7 @@ export function render() {
   ctx.lineCap = "round";
 
   for (const b of G.bushes) {
-    if (Math.abs(b.x - G.CAM.x) > VW / 2 + 40 || Math.abs(b.y - G.CAM.y) > VH / 2 + 40)
+    if (Math.abs(b.x - G.CAM.x) > halfW + M || Math.abs(b.y - G.CAM.y) > halfH + M)
       continue;
     ctx.fillStyle = "rgba(58,74,38,.9)";
     ctx.beginPath();
@@ -464,14 +539,18 @@ export function render() {
 
   for (const o of G.obstacles) {
     if (o.tree) continue;
-    if (Math.abs(o.x - G.CAM.x) > VW / 2 + 60 || Math.abs(o.y - G.CAM.y) > VH / 2 + 60)
+    if (Math.abs(o.x - G.CAM.x) > halfW + M || Math.abs(o.y - G.CAM.y) > halfH + M)
       continue;
     if (o.bunker) {
       ctx.save();
-      ctx.translate(o.x, o.y);
+      ctx.translate(o.x + SHADOW_DX, o.y + SHADOW_DY);
       ctx.rotate(o.seed);
       ctx.fillStyle = "rgba(0,0,0,.3)";
-      ctx.fillRect(-40 + 4, -40 + 5, 80, 80);
+      ctx.fillRect(-40, -40, 80, 80);
+      ctx.restore();
+      ctx.save();
+      ctx.translate(o.x, o.y);
+      ctx.rotate(o.seed);
       ctx.fillStyle = "#6f6b60";
       ctx.fillRect(-40, -40, 80, 80);
       ctx.strokeStyle = "#4c4940";
@@ -485,7 +564,7 @@ export function render() {
       ctx.translate(o.x, o.y);
       ctx.fillStyle = "rgba(0,0,0,.28)";
       ctx.beginPath();
-      ctx.ellipse(3, 4, o.r, o.r * 0.8, 0, 0, 6.283);
+      ctx.ellipse(SHADOW_DX, SHADOW_DY, o.r, o.r * 0.8, 0, 0, 6.283);
       ctx.fill();
       ctx.fillStyle = "#7d7a6c";
       ctx.beginPath();
@@ -590,7 +669,7 @@ export function render() {
   }
 
   for (const tr of G.trees) {
-    if (Math.abs(tr.x - G.CAM.x) > VW / 2 + 60 || Math.abs(tr.y - G.CAM.y) > VH / 2 + 60)
+    if (Math.abs(tr.x - G.CAM.x) > halfW + M || Math.abs(tr.y - G.CAM.y) > halfH + M)
       continue;
     ctx.fillStyle = "rgba(0,0,0,.22)";
     ctx.beginPath();
@@ -620,9 +699,10 @@ export function render() {
   ctx.restore();
 
   if (G.state === "play") {
+    const sc2 = getScale();
     for (const e of G.enemies) {
-      const sx = e.x - G.CAM.x + VW / 2;
-      const sy = e.y - G.CAM.y + VH / 2;
+      const sx = (e.x - G.CAM.x) * sc2 + VW / 2;
+      const sy = (e.y - G.CAM.y) * sc2 + VH / 2;
       const m = 34;
       if (sx > -10 && sx < VW + 10 && sy > -10 && sy < VH + 10) continue;
       const cx2 = clamp(sx, m, VW - m);
@@ -693,6 +773,14 @@ export function render() {
       ctx.fillText(G.markTxt, mx, my - sp - 24);
       ctx.globalAlpha = 1;
     }
+    if (G.warnT > 0) {
+      ctx.fillStyle = G.warnCol;
+      ctx.font = "700 16px 'Russo One'";
+      ctx.textAlign = "center";
+      ctx.globalAlpha = clamp(G.warnT / 0.4, 0, 1);
+      ctx.fillText(G.warnTxt, mx, my + sp + 30);
+      ctx.globalAlpha = 1;
+    }
     if (G.player.burning > 0) {
       ctx.fillStyle = `rgba(255,90,30,${0.6 + Math.sin(G.gameT * 10) * 0.3})`;
       ctx.font = "700 14px 'Russo One'";
@@ -705,4 +793,7 @@ export function render() {
     ctx.arc(mouse.x, mouse.y, 3, 0, 6.283);
     ctx.fill();
   }
+}
+export function getScale() {
+  return (VH / VIEW_H) * G.zoom;
 }

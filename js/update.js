@@ -1,5 +1,5 @@
 import { G } from "./state.js";
-// import { SHELLS } from "./data.js";
+import { WORLD, VIEW_H } from "./data.js";
 import { clamp, lerp, rnd, dist, angDiff } from "./utils.js";
 import {
     mkTank, tankSpeed, tankTurretSpd, tankRadius, reloadTime,
@@ -29,9 +29,10 @@ export function updatePlayer(dt) {
     p.a += tr * p.cls.turn * dt * (Math.abs(p.v) > 5 ? (p.v < 0 ? -1 : 1) : 1);
     moveTank(p, dt);
 
+    const sc = (innerHeight / VIEW_H) * G.zoom;
     const mw = {
-        x: G.CAM.x + (mouse.x - innerWidth / 2),
-        y: G.CAM.y + (mouse.y - innerHeight / 2),
+        x: G.CAM.x + (mouse.x - innerWidth / 2) / sc,
+        y: G.CAM.y + (mouse.y - innerHeight / 2) / sc,
     };
     const tp = turretPos(p);
     const want = Math.atan2(mw.y - tp.y, mw.x - tp.x);
@@ -107,6 +108,27 @@ export function updateShells(dt) {
         if (!isFinite(s.x) || !isFinite(s.y) || !isFinite(s.spd)) {
             G.shells.splice(i, 1);
             continue;
+        }
+        if (s.guided && s.own === "p") {
+            const sc = (innerHeight / VIEW_H) * G.zoom;
+            const mx = G.CAM.x + (mouse.x - innerWidth / 2) / sc;
+            const my = G.CAM.y + (mouse.y - innerHeight / 2) / sc;
+            const targetAng = Math.atan2(my - s.y, mx - s.x);
+            const curAng = Math.atan2(s.dy, s.dx);
+            const diff = angDiff(curAng, targetAng);
+            const maxTurn = 2.5 * dt;
+            const newAng = curAng + clamp(diff, -maxTurn, maxTurn);
+            s.dx = Math.cos(newAng);
+            s.dy = Math.sin(newAng);
+            s.ang = newAng;
+            if (Math.random() < 0.3) {
+                G.parts.push({
+                    x: s.x, y: s.y,
+                    vx: rnd(-10, 10), vy: rnd(-10, 10),
+                    t: 0, life: rnd(0.4, 0.8),
+                    r: rnd(2, 4), kind: "smoke",
+                });
+            }
         }
         const steps = Math.max(1, Math.ceil((s.spd * dt) / 10));
         let hit = null;
@@ -234,6 +256,7 @@ export function update(dt) {
 
     const sdt = dt * G.timeScale;
     G.gameT += sdt;
+    G.zoom = lerp(G.zoom, G.zoomTarget, 1 - Math.pow(0.003, dt));
 
     // БАГ-ФИКС: после смерти не обновляем снаряды (иначе летят в труп)
     if (G.state === "play") {
@@ -293,17 +316,19 @@ export function update(dt) {
         }
     }
 
+    const sc = (innerHeight / VIEW_H) * G.zoom;
     const lead = {
-        x: (mouse.x - innerWidth / 2) * 0.22,
-        y: (mouse.y - innerHeight / 2) * 0.22,
+        x: (mouse.x - innerWidth / 2) * 0.22 / sc,
+        y: (mouse.y - innerHeight / 2) * 0.22 / sc,
     };
     if (G.player) {
         G.CAM.x = lerp(G.CAM.x, G.player.x + lead.x, 1 - Math.pow(0.001, dt));
         G.CAM.y = lerp(G.CAM.y, G.player.y + lead.y, 1 - Math.pow(0.001, dt));
     }
-    const WORLD = 3400;
-    G.CAM.x = clamp(G.CAM.x, innerWidth / 2 - 100, WORLD - innerWidth / 2 + 100);
-    G.CAM.y = clamp(G.CAM.y, innerHeight / 2 - 100, WORLD - innerHeight / 2 + 100);
+    const halfW = innerWidth / (2 * sc);
+    const halfH = innerHeight / (2 * sc);
+    G.CAM.x = clamp(G.CAM.x, halfW - 100, WORLD - halfW + 100);
+    G.CAM.y = clamp(G.CAM.y, halfH - 100, WORLD - halfH + 100);
     G.shake = Math.max(0, G.shake - 60 * dt);
     G.shX = rnd(-G.shake, G.shake) * 0.5;
     G.shY = rnd(-G.shake, G.shake) * 0.5;
@@ -317,6 +342,7 @@ export function update(dt) {
         }
     }
     if (G.markT > 0) G.markT -= dt;
+    if (G.warnT > 0) G.warnT -= dt;
 
     updEngine(G.player ? G.player.v : 0);
 }

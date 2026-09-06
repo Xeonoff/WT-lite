@@ -4,7 +4,7 @@ import { $, clamp } from "./utils.js";
 import { mkTank, reloadTime, getCurrentShell } from "./entities.js";
 import { sfx } from "./audio.js";
 import { genWorld } from "./world.js";
-import { drawTopScheme } from "./render.js";
+import { drawTopScheme, drawTankPreview } from "./render.js";
 
 export function addFeed(txt, cls = "") {
     const f = document.createElement("div");
@@ -66,10 +66,12 @@ export function startWave(n) {
 export function spawnWave(n) {
     import("./world.js").then(({ freeSpot }) => {
         const total = Math.min(3 + n, 9);
+        let missiles = n >= 4 ? Math.min(2, Math.floor((n - 2) / 3)) : 0;
         let heavies = n >= 3 ? Math.min(3, Math.floor((n - 1) / 2)) : 0;
         let lights = n <= 3 ? 2 : n % 2;
-        const meds = Math.max(1, total - heavies - lights);
+        const meds = Math.max(1, total - heavies - lights - missiles);
         const list = [];
+        for (let i = 0; i < missiles; i++) list.push("missile");
         for (let i = 0; i < heavies; i++) list.push("heavy");
         for (let i = 0; i < lights; i++) list.push("light");
         for (let i = 0; i < meds; i++) list.push("med");
@@ -125,6 +127,7 @@ export function selectShell(i) {
 }
 
 export function buildDamagePanel() {
+    $("tankNameHdr").textContent = G.player.cls.name + " · СОСТОЯНИЕ МАШИНЫ";
     const cr = $("crewRow");
     cr.innerHTML = "";
     G.crewCells = {};
@@ -281,7 +284,7 @@ export function showRespawnMenu() {
     const container = $("tankOptions");
     container.innerHTML = "";
 
-    const order = ["light", "med", "heavy"];
+    const order = ["light", "med", "heavy", "missile"];
     for (const cls of order) {
         const c = CLASSES[cls];
         const cost = RESPAWN_COSTS[cls];
@@ -291,6 +294,7 @@ export function showRespawnMenu() {
         card.className = "tankCard" + (affordable ? "" : " disabled");
         card.dataset.cls = cls;
         card.innerHTML = `
+      <canvas class="tcCv" width="220" height="64"></canvas>
       <div class="tcName">${c.name}</div>
       <div class="tcKind">${c.kind}</div>
       <div class="tcStats">
@@ -305,6 +309,7 @@ export function showRespawnMenu() {
             card.addEventListener("click", () => selectTankForRespawn(cls));
         }
         container.appendChild(card);
+        drawTankPreview(card.querySelector(".tcCv").getContext("2d"), c, 220, 64);
     }
 
     G.selectedTank = null;

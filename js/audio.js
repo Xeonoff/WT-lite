@@ -181,7 +181,35 @@ export function sfx(type, vol = 1, pitch = 1) {
     o.stop(t + 0.22);
   }
 }
-
+export function sfxMissileFly(duration, vol = 1) {
+  if (!AC || muted) return;
+  vol = clamp(vol, 0, 1);
+  const t = AC.currentTime;
+  // Жужжание двигателя ракеты
+  const o = AC.createOscillator();
+  o.type = "sawtooth";
+  o.frequency.setValueAtTime(160, t);
+  o.frequency.linearRampToValueAtTime(200, t + duration);
+  const f = AC.createBiquadFilter();
+  f.type = "lowpass";
+  f.frequency.value = 500;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(0.12 * vol, t);
+  g.gain.linearRampToValueAtTime(0.04 * vol, t + duration);
+  g.gain.linearRampToValueAtTime(0.001, t + duration + 0.2);
+  o.connect(f); f.connect(g); g.connect(master);
+  o.start(t); o.stop(t + duration + 0.3);
+  // Свист воздуха
+  const o2 = AC.createOscillator();
+  o2.type = "sine";
+  o2.frequency.setValueAtTime(700, t);
+  o2.frequency.linearRampToValueAtTime(500, t + duration);
+  const g2 = AC.createGain();
+  g2.gain.setValueAtTime(0.04 * vol, t);
+  g2.gain.linearRampToValueAtTime(0.001, t + duration);
+  o2.connect(g2); g2.connect(master);
+  o2.start(t); o2.stop(t + duration + 0.1);
+}
 export function updEngine(spd) {
   if (!AC || !engGain) return;
   const v =

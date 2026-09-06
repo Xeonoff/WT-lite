@@ -1,4 +1,5 @@
 export const WORLD = 3400;
+export const VIEW_H = 1000;
 
 export const MNAMES = {
     driver: "Механик-водитель",
@@ -22,6 +23,7 @@ export const RESPAWN_COSTS = {
     light: 200,
     med: 400,
     heavy: 800,
+    missile: 500,
 };
 export const MOD_LIST = [
     ["engine", "ДВИГ"],
@@ -108,6 +110,31 @@ export const CLASSES = {
                 { t: "ammo", x: -20, y: 15, r: 9 },
                 { t: "fuel", x: -20, y: -15, r: 8 },
                 { t: "engine", x: -31, y: 0, r: 14, hp: 180, max: 180 },
+            ]
+        },
+    },
+    missile: {
+        name: "ПТРК «Штурм»", kind: "ПТУР",
+        L: 56, W: 34, tread: 7, tR: 13, barrel: 46, tOff: -2,
+        speed: 140, turn: 2.0, turret: 2.0,
+        pen: 0, dmg: 0, keep: 500, flank: false,
+        launcher: true,
+        armor: { front: 30, side: 20, rear: 15, turret: 30 },
+        score: 300,
+        body: "#4a5a3a", bodyD: "#3a4a2e", tur: "#556545", barrelCol: "#2e3a24",
+        shells: [
+            { name: "ПТУР 9М113", type: "ПТУР", pen: 160, spd: 650, col: "#7fff7f", dmg: 150, reload: 13.0, guided: true, life: 4.0 },
+        ],
+        schema: {
+            mods: [
+                { t: "driver", x: 20, y: -8, r: 6 },
+                { t: "gunner", x: 12, y: 8, r: 6 },
+                { t: "commander", x: 2, y: 0, r: 5.5 },
+                { t: "gun", x: -8, y: 0, r: 7, hp: 70, max: 70 },
+                { t: "ring", x: -2, y: 0, r: 10, hp: 90, max: 90 },
+                { t: "ammo", x: -4, y: 11, r: 9 },
+                { t: "fuel", x: -10, y: -11, r: 7 },
+                { t: "engine", x: -20, y: 0, r: 10, hp: 120, max: 120 },
             ]
         },
     },
