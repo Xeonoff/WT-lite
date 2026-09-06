@@ -19,9 +19,9 @@ export const CREW_SHORT = {
     commander: "КМД",
 };
 export const RESPAWN_COSTS = {
-    light: 100,
-    med: 250,
-    heavy: 450,
+    light: 200,
+    med: 400,
+    heavy: 800,
 };
 export const MOD_LIST = [
     ["engine", "ДВИГ"],
@@ -41,8 +41,8 @@ export const CLASSES = {
         score: 150,
         body: "#6e6f5e", bodyD: "#575847", tur: "#77786a", barrelCol: "#4c4d40",
         shells: [
-            { name: "БР-25", type: "ББ", pen: 40, spd: 1200, col: "#ffd23f", dmg: 45, reload: 3.0 },
-            { name: "ОФ-25", type: "ОФ", pen: 8, spd: 900, col: "#ff8c42", dmg: 60, reload: 3.5 },
+            { name: "БР-25", type: "ББ", pen: 45, spd: 1200, col: "#ffd23f", dmg: 45, reload: 3.0 },
+            { name: "ОФ-25", type: "ОФ", pen: 15, spd: 900, col: "#ff8c42", dmg: 80, reload: 3.5 },
         ],
         schema: {
             mods: [
@@ -67,7 +67,7 @@ export const CLASSES = {
         body: "#5c6b3e", bodyD: "#47532f", tur: "#66754a", barrelCol: "#3f4729",
         shells: [
             { name: "БР-350Б", type: "ББ", pen: 84, spd: 1500, col: "#ffd23f", dmg: 95, reload: 6.0 },
-            { name: "ОФ-350", type: "ОФ", pen: 14, spd: 1050, col: "#ff8c42", dmg: 118, reload: 6.5 },
+            { name: "ОФ-350", type: "ОФ", pen: 25, spd: 1050, col: "#ff8c42", dmg: 140, reload: 6.5 },
             { name: "БП-350", type: "БП", pen: 122, spd: 1750, col: "#8fd8ff", dmg: 80, reload: 7.0 },
         ],
         schema: {
@@ -89,12 +89,12 @@ export const CLASSES = {
         L: 76, W: 46, tread: 10, tR: 18, barrel: 62, tOff: -4,
         speed: 95, turn: 1.35, turret: 1.5,
         pen: 102, dmg: 100, keep: 460, flank: false,
-        armor: { front: 80, side: 55, rear: 40, turret: 90 },
+        armor: { front: 100, side: 70, rear: 40, turret: 120 },
         score: 400,
         body: "#4e5450", bodyD: "#3c413d", tur: "#565c58", barrelCol: "#33372f",
         shells: [
             { name: "БР-410Б", type: "ББ", pen: 110, spd: 1400, col: "#ffd23f", dmg: 130, reload: 9.0 },
-            { name: "ОФ-410", type: "ОФ", pen: 20, spd: 1000, col: "#ff8c42", dmg: 160, reload: 10.0 },
+            { name: "ОФ-410", type: "ОФ", pen: 40, spd: 1000, col: "#ff8c42", dmg: 200, reload: 10.0 },
             { name: "БП-410", type: "БП", pen: 150, spd: 1650, col: "#8fd8ff", dmg: 110, reload: 11.0 },
         ],
         schema: {
