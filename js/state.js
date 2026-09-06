@@ -1,0 +1,48 @@
+import { WORLD } from "./data.js";
+import { mkCv } from "./utils.js";
+
+export const G = {
+    freeRespawn: true,      
+    selectedTank: null,       
+    state: "menu",
+    wave: 0,
+    kills: 0,
+    pens: 0,
+    score: 0,
+    timeScale: 1,
+    slowT: 0,
+    gameT: 0,
+    overT: 0,
+    overCause: "",
+    player: null,
+    enemies: [],
+    shells: [],
+    parts: [],
+    debris: [],
+    floaters: [],
+    wrecks: [],
+    crates: [],
+    spawnQ: [],
+    tracks: [],
+    CAM: { x: WORLD / 2, y: WORLD / 2 },
+    shake: 0,
+    shX: 0,
+    shY: 0,
+    curShell: 0,
+    waveState: "idle",
+    waveT: 0,
+    obstacles: [],
+    trees: [],
+    bushes: [],
+    xr: null,
+    markTxt: "",
+    markCol: "#fff",
+    markT: 0,
+    best: +(localStorage.getItem("sg_best") || 0),
+    crewCells: {},
+    modCells: {},
+    errShown: false,
+};
+
+export const decals = mkCv(WORLD / 2, WORLD / 2);
+export const dctx = decals.getContext("2d");

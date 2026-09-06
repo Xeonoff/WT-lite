@@ -1,0 +1,1047 @@
+:root {
+    --olv: #3a422c;
+    --olv-d: #20261a;
+    --brass: #e0b23e;
+    --alarm: #ff4a3d;
+    --steel: #9fb0be;
+    --paper: #d9dec6;
+    --ok: #57d977;
+    --warn: #ffd23f;
+    --bad: #ff5147;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box
+}
+
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+    background: #0d0f0a;
+    font-family: Rubik, system-ui, sans-serif;
+    color: var(--paper)
+}
+
+#cv {
+    position: fixed;
+    inset: 0;
+    display: block;
+    cursor: none
+}
+
+.cut {
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px)
+}
+
+.panel {
+    background: linear-gradient(180deg, rgba(52, 60, 38, .82), rgba(21, 25, 14, .9));
+    border: 1px solid rgba(150, 162, 110, .35);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 6px 18px rgba(0, 0, 0, .45)
+}
+
+#hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity .4s
+}
+
+#hud.on {
+    opacity: 1
+}
+
+#tl {
+    position: absolute;
+    top: 14px;
+    left: 16px;
+    display: flex;
+    gap: 10px
+}
+
+.stat {
+    padding: 8px 14px;
+    min-width: 86px
+}
+
+.stat .k {
+    font-size: 10px;
+    letter-spacing: .22em;
+    color: #a8b389;
+    text-transform: uppercase
+}
+
+.stat .v {
+    font-family: "Russo One";
+    font-size: 24px;
+    line-height: 1.05;
+    color: var(--paper)
+}
+
+#statScore .v {
+    color: var(--brass)
+}
+
+#feed {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    width: 330px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end
+}
+
+.fitem {
+    font-size: 12.5px;
+    padding: 6px 12px;
+    background: rgba(15, 18, 10, .78);
+    border-right: 3px solid var(--steel);
+    max-width: 100%;
+    animation: fin .25s ease
+}
+
+.fitem.good {
+    border-color: var(--ok);
+    color: #cfeecf
+}
+
+.fitem.bad {
+    border-color: var(--alarm);
+    color: #ffd2cd
+}
+
+.fitem.warn {
+    border-color: var(--warn);
+    color: #ffe9b0
+}
+
+@keyframes fin {
+    from {
+        transform: translateX(20px);
+        opacity: 0
+    }
+
+    to {
+        transform: none;
+        opacity: 1
+    }
+}
+
+#banner {
+    position: absolute;
+    top: 16%;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    opacity: 0;
+    pointer-events: none
+}
+
+#banner.show {
+    animation: ban 2.6s ease forwards
+}
+
+#banner h2 {
+    font-family: "Russo One";
+    font-size: clamp(34px, 6vw, 64px);
+    letter-spacing: .08em;
+    color: var(--paper);
+    text-shadow: 0 4px 0 rgba(0, 0, 0, .45), 0 0 34px rgba(224, 178, 62, .35)
+}
+
+#banner p {
+    font-size: 15px;
+    letter-spacing: .35em;
+    text-transform: uppercase;
+    color: var(--brass);
+    margin-top: 4px
+}
+
+@keyframes ban {
+    0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(24px) scale(.94)
+    }
+
+    12% {
+        opacity: 1;
+        transform: translateX(-50%)
+    }
+
+    80% {
+        opacity: 1
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-16px)
+    }
+}
+
+#bottomC {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: flex-end;
+    gap: 16px
+}
+
+#shells {
+    display: flex;
+    gap: 8px
+}
+
+.shell {
+    width: 118px;
+    padding: 7px 10px;
+    transition: transform .12s, box-shadow .12s;
+    position: relative
+}
+
+.shell .n {
+    font-family: "Russo One";
+    font-size: 13px
+}
+
+.shell .d {
+    font-size: 10px;
+    color: #a8b389;
+    letter-spacing: .08em
+}
+
+.shell .p {
+    font-size: 11px;
+    color: var(--brass);
+    font-weight: 700
+}
+
+.shell.active {
+    box-shadow: 0 0 0 2px var(--brass), 0 0 18px rgba(224, 178, 62, .35);
+    transform: translateY(-4px)
+}
+
+.shell .key {
+    position: absolute;
+    top: -9px;
+    left: -4px;
+    font-family: "Russo One";
+    font-size: 11px;
+    background: var(--olv-d);
+    border: 1px solid rgba(150, 162, 110, .5);
+    padding: 1px 6px
+}
+
+#reload {
+    width: 260px;
+    padding: 8px 12px 10px
+}
+
+#reload .lbl {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    letter-spacing: .14em;
+    color: #a8b389;
+    text-transform: uppercase
+}
+
+#rbar {
+    height: 9px;
+    margin-top: 5px;
+    background: #151810;
+    border: 1px solid rgba(150, 162, 110, .3)
+}
+
+#rfill {
+    height: 100%;
+    width: 100%;
+    background: repeating-linear-gradient(-45deg, var(--brass) 0 6px, #b98f2e 6px 12px)
+}
+
+#rtext {
+    font-family: "Russo One";
+    font-size: 13px;
+    margin-top: 4px;
+    color: var(--paper)
+}
+
+#bl {
+    position: absolute;
+    left: 16px;
+    bottom: 16px;
+    width: 288px;
+    padding: 10px 12px 8px
+}
+
+#bl .hd {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline
+}
+
+#bl .hd b {
+    font-family: "Russo One";
+    font-size: 14px;
+    letter-spacing: .06em
+}
+
+#bl .hd span {
+    font-size: 10px;
+    color: #a8b389;
+    letter-spacing: .2em
+}
+
+#panelCv {
+    width: 264px;
+    height: 132px;
+    margin-top: 4px
+}
+
+#repInfo {
+    font-size: 12px;
+    color: var(--warn);
+    height: 16px;
+    margin-top: 2px
+}
+
+.legend {
+    display: flex;
+    gap: 12px;
+    font-size: 10px;
+    color: #a8b389;
+    margin-top: 4px
+}
+
+.legend i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: -1px
+}
+
+#hint {
+    position: absolute;
+    right: 16px;
+    bottom: 14px;
+    font-size: 11px;
+    color: #9aa77e;
+    letter-spacing: .05em;
+    text-align: right;
+    line-height: 1.7;
+    background: rgba(15, 18, 10, .55);
+    padding: 8px 12px
+}
+
+#hint b {
+    color: var(--brass);
+    font-family: "Russo One";
+    font-weight: 400
+}
+
+#vign {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 6;
+    opacity: 0;
+    box-shadow: inset 0 0 140px 50px rgba(255, 40, 25, .55);
+    transition: opacity .5s
+}
+
+#firev {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 6;
+    opacity: 0;
+    box-shadow: inset 0 0 160px 60px rgba(255, 120, 20, .4);
+    animation: fl .5s infinite alternate
+}
+
+@keyframes fl {
+    from {
+        filter: brightness(.9)
+    }
+
+    to {
+        filter: brightness(1.25)
+    }
+}
+
+#xr {
+    position: fixed;
+    right: 26px;
+    top: 50%;
+    transform: translate(60px, -50%);
+    width: 560px;
+    z-index: 7;
+    pointer-events: none;
+    opacity: 0;
+    transition: transform .22s cubic-bezier(.2, 1.4, .4, 1), opacity .22s
+}
+
+#xr.show {
+    transform: translate(0, -50%);
+    opacity: 1
+}
+
+#xrHead {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 10px 16px 4px
+}
+
+#xrTitle {
+    font-family: "Russo One";
+    font-size: 24px;
+    letter-spacing: .1em;
+    color: var(--alarm)
+}
+
+#xrTitle.nr {
+    color: #8fa0b2
+}
+
+#xrShell {
+    font-size: 12px;
+    color: var(--brass);
+    letter-spacing: .1em
+}
+
+#xrCv {
+    display: block;
+    width: 560px;
+    height: 262px;
+    background: radial-gradient(120% 140% at 30% 0%, #1b222c 0%, #0c1015 70%);
+    border: 1px solid #35414e
+}
+
+#xrSub {
+    padding: 8px 16px 10px;
+    font-size: 12.5px;
+    color: #cfd8e2;
+    line-height: 1.5
+}
+
+#xrSub b {
+    color: var(--alarm)
+}
+
+.screen {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: auto
+}
+
+.hidden {
+    display: none !important
+}
+
+#menu {
+    background:
+        repeating-linear-gradient(-45deg, rgba(224, 178, 62, .05) 0 14px, transparent 14px 34px),
+        radial-gradient(90% 90% at 70% 20%, rgba(80, 96, 54, .35), transparent 60%),
+        linear-gradient(160deg, #1a2013 0%, #0e120a 55%, #141a0f 100%)
+}
+
+#menu::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .16) 0 2px, transparent 2px 4px);
+    pointer-events: none;
+    z-index: 1
+}
+
+.mfx {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0
+}
+
+.mfx::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 230vmax;
+    height: 230vmax;
+    margin: -115vmax 0 0 -115vmax;
+    background: conic-gradient(from 0deg, transparent 0 342deg, rgba(224, 178, 62, .13) 356deg, transparent 360deg);
+    animation: sweep 7s linear infinite
+}
+
+@keyframes sweep {
+    to {
+        transform: rotate(360deg)
+    }
+}
+
+.mwrap {
+    position: relative;
+    z-index: 2;
+    width: min(1060px, 94vw);
+    padding: 34px 0;
+    margin: auto
+}
+
+.chip {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: .3em;
+    padding: 5px 14px;
+    border: 1px solid rgba(224, 178, 62, .5);
+    color: var(--brass);
+    margin-bottom: 14px
+}
+
+h1.logo {
+    font-family: "Russo One";
+    font-size: clamp(46px, 7.4vw, 92px);
+    line-height: .95;
+    letter-spacing: .02em;
+    color: var(--paper);
+    text-shadow: 0 5px 0 rgba(0, 0, 0, .5), 0 0 40px rgba(224, 178, 62, .25)
+}
+
+h1.logo em {
+    font-style: normal;
+    color: var(--brass)
+}
+
+.tag {
+    margin: 12px 0 26px;
+    font-size: 15px;
+    color: #b9c29d;
+    max-width: 62ch
+}
+
+.tag b {
+    color: var(--brass)
+}
+
+.mgrid {
+    display: grid;
+    grid-template-columns: 1.15fr .85fr;
+    gap: 18px;
+    margin-bottom: 26px
+}
+
+@media(max-width:820px) {
+    .mgrid {
+        grid-template-columns: 1fr
+    }
+}
+
+.mbox {
+    padding: 16px 18px
+}
+
+.mbox h3 {
+    font-family: "Russo One";
+    font-size: 14px;
+    letter-spacing: .18em;
+    color: var(--brass);
+    margin-bottom: 10px
+}
+
+.mbox h3::before {
+    content: "▸ "
+}
+
+.krow {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px dashed rgba(150, 162, 110, .22);
+    font-size: 13.5px
+}
+
+.krow b {
+    font-family: "Russo One";
+    font-weight: 400;
+    color: var(--paper);
+    white-space: nowrap
+}
+
+.krow span {
+    color: #b9c29d;
+    text-align: right
+}
+
+.shellrow {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 6px 0;
+    border-bottom: 1px dashed rgba(150, 162, 110, .22);
+    font-size: 13.5px
+}
+
+.shellrow b {
+    font-family: "Russo One";
+    font-weight: 400;
+    min-width: 96px
+}
+
+.shellrow .pen {
+    color: var(--brass);
+    font-weight: 700;
+    margin-left: auto;
+    white-space: nowrap
+}
+
+.enem {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px
+}
+
+.enem div {
+    border: 1px solid rgba(150, 162, 110, .3);
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #b9c29d
+}
+
+.enem b {
+    display: block;
+    font-family: "Russo One";
+    color: var(--paper);
+    font-weight: 400;
+    font-size: 12.5px
+}
+
+.btnrow {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    flex-wrap: wrap
+}
+
+button.big {
+    font-family: "Russo One";
+    font-size: 22px;
+    letter-spacing: .14em;
+    color: #151a0d;
+    background: linear-gradient(180deg, #eec95c, #c99a2e);
+    border: none;
+    padding: 16px 52px;
+    cursor: pointer;
+    position: relative;
+    transition: transform .12s, box-shadow .12s;
+    clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px)
+}
+
+button.big:hover {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 10px 30px rgba(224, 178, 62, .4)
+}
+
+button.big:active {
+    transform: translateY(0)
+}
+
+button.ghost {
+    font-family: "Russo One";
+    font-size: 14px;
+    letter-spacing: .12em;
+    color: var(--paper);
+    background: transparent;
+    border: 1px solid rgba(217, 222, 198, .4);
+    padding: 12px 26px;
+    cursor: pointer;
+    transition: all .12s
+}
+
+button.ghost:hover {
+    border-color: var(--brass);
+    color: var(--brass);
+    transform: translateY(-2px)
+}
+
+#bestLine {
+    font-size: 13px;
+    color: #a8b389;
+    letter-spacing: .12em
+}
+
+#bestLine b {
+    color: var(--brass)
+}
+
+#over,
+#pause {
+    background: rgba(8, 10, 6, .82);
+    backdrop-filter: blur(3px)
+}
+
+.obox {
+    width: min(560px, 92vw);
+    padding: 34px 40px;
+    text-align: left;
+    margin: auto
+}
+
+.obox h2 {
+    font-family: "Russo One";
+    font-size: clamp(30px, 5vw, 46px);
+    letter-spacing: .05em;
+    color: var(--alarm);
+    margin-bottom: 4px
+}
+
+.obox.alt h2 {
+    color: var(--paper)
+}
+
+.obox .sub {
+    font-size: 12px;
+    letter-spacing: .3em;
+    color: #a8b389;
+    text-transform: uppercase;
+    margin-bottom: 22px
+}
+
+.orow {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px dashed rgba(150, 162, 110, .25);
+    font-size: 15px
+}
+
+.orow b {
+    font-family: "Russo One";
+    font-weight: 400;
+    color: var(--brass)
+}
+
+.obox .btnrow {
+    margin-top: 26px
+}
+
+#crewRow {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 6px
+}
+
+.crew {
+    background: rgba(10, 12, 7, .5);
+    border: 1px solid rgba(150, 162, 110, .25);
+    padding: 4px 2px 3px;
+    text-align: center;
+    position: relative
+}
+
+.crew .cdot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin: 2px auto 0;
+    background: #57d977
+}
+
+.crew .cname {
+    font-family: "Russo One";
+    font-size: 10px;
+    letter-spacing: .06em;
+    margin-top: 2px
+}
+
+.crew .chp {
+    height: 3px;
+    background: #151810;
+    margin: 3px 4px 1px
+}
+
+.crew .chp i {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: #57d977
+}
+
+.crew.warn .cdot,
+.crew.warn .chp i {
+    background: #ffd23f
+}
+
+.crew.bad .cdot,
+.crew.bad .chp i {
+    background: #ff5147
+}
+
+.crew.dead::after {
+    content: "✕";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ff5147;
+    font: 700 20px "Russo One";
+    text-shadow: 0 0 6px #000
+}
+
+#modRow {
+    display: flex;
+    gap: 5px;
+    margin-top: 6px
+}
+
+.mod {
+    flex: 1;
+    font-family: "Russo One";
+    font-size: 9.5px;
+    text-align: center;
+    padding: 4px 2px;
+    border: 1px solid rgba(150, 162, 110, .25);
+    background: rgba(10, 12, 7, .5);
+    letter-spacing: .04em
+}
+
+.mod i {
+    display: block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin: 0 auto 3px;
+    background: #57d977
+}
+
+.mod.warn i {
+    background: #ffd23f
+}
+
+.mod.bad i {
+    background: #ff5147
+}
+
+.mod.bad {
+    animation: blinker 1s infinite
+}
+
+@keyframes blinker {
+    50% {
+        border-color: #ff5147;
+        box-shadow: 0 0 8px rgba(255, 81, 71, .5)
+    }
+}
+
+#consRow {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px
+}
+
+.cons {
+    flex: 1;
+    position: relative;
+    background: rgba(10, 12, 7, .55);
+    border: 1px solid rgba(150, 162, 110, .3);
+    padding: 15px 4px 5px;
+    text-align: center;
+    overflow: hidden
+}
+
+.cons .key {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-family: "Russo One";
+    font-size: 10px;
+    color: #0f120a;
+    background: var(--brass);
+    padding: 0 4px
+}
+
+.cons .nm {
+    font-family: "Russo One";
+    font-size: 9px;
+    letter-spacing: .05em;
+    color: #b9c29d;
+    position: relative;
+    z-index: 2
+}
+
+.cons .cfill {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 100%;
+    width: 0%;
+    background: rgba(224, 178, 62, .28);
+    z-index: 1
+}
+
+.cons.active {
+    border-color: var(--brass)
+}
+
+.cons.readyF {
+    border-color: #ff8c42;
+    box-shadow: 0 0 10px rgba(255, 140, 66, .45);
+    animation: blinker .7s infinite
+}
+
+.cons .cd {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Russo One";
+    font-size: 13px;
+    color: #ffd23f;
+    z-index: 2
+}
+
+#alerts {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    flex-wrap: wrap
+}
+
+.alert {
+    font-family: "Russo One";
+    font-size: 11px;
+    padding: 3px 8px;
+    letter-spacing: .08em
+}
+
+.alert.fire {
+    background: #7a2018;
+    color: #ffd2c0;
+    border: 1px solid #ff5147;
+    animation: blinker .7s infinite
+}
+
+.alert.bad {
+    background: #3a3a12;
+    color: #ffe9b0;
+    border: 1px solid #ffd23f
+}
+
+/* Экран возрождения — карточки техники */
+.respawnTitle {
+    font-family: "Russo One";
+    font-size: 14px;
+    letter-spacing: .18em;
+    color: var(--brass);
+    margin: 20px 0 12px
+}
+
+.tankOptions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin: 0 0 22px
+}
+
+.tankCard {
+    border: 1px solid rgba(150, 162, 110, .35);
+    padding: 14px 14px 12px;
+    cursor: pointer;
+    transition: border-color .15s, transform .15s, box-shadow .15s, background .15s;
+    background: rgba(10, 12, 7, .4);
+    position: relative;
+}
+
+.tankCard:hover:not(.disabled) {
+    border-color: var(--brass);
+    transform: translateY(-3px)
+}
+
+.tankCard.selected {
+    border-color: var(--brass);
+    box-shadow: 0 0 14px rgba(224, 178, 62, .4);
+    background: rgba(224, 178, 62, .08);
+}
+
+.tankCard.disabled {
+    opacity: .4;
+    cursor: not-allowed
+}
+
+.tcName {
+    font-family: "Russo One";
+    font-size: 13.5px;
+    color: var(--paper);
+    line-height: 1.2
+}
+
+.tcKind {
+    font-size: 10px;
+    letter-spacing: .22em;
+    color: var(--brass);
+    text-transform: uppercase;
+    margin: 4px 0 10px
+}
+
+.tcStats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #a8b389;
+    margin-bottom: 12px
+}
+
+.tcStats span b {
+    color: var(--paper);
+    font-weight: 500
+}
+
+.tcCost {
+    font-family: "Russo One";
+    font-size: 13px;
+    color: var(--brass)
+}
+
+.tcCost.free {
+    color: var(--ok)
+}
+
+.tankCard.disabled .tcCost {
+    color: #7a7f6a
+}
+
+.tankCard.selected::after {
+    content: "✓";
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-family: "Russo One";
+    font-size: 16px;
+    color: var(--brass);
+}
+
+#btnRespawn:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none
+}
