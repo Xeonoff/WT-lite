@@ -1,9 +1,9 @@
 import { G } from "./state.js";
-import { SHELLS } from "./data.js";
+// import { SHELLS } from "./data.js";
 import { clamp, lerp, rnd, dist, angDiff } from "./utils.js";
 import {
     mkTank, tankSpeed, tankTurretSpd, tankRadius, reloadTime,
-    toLocal, turretPos, moveTank,
+    toLocal, turretPos, moveTank, getCurrentShell,
 } from "./entities.js";
 import { fire, damageModules, computeImpact, hitResultFx } from "./combat.js";
 import { sparks } from "./effects.js";
@@ -41,7 +41,7 @@ export function updatePlayer(dt) {
 
     p.reload -= dt;
     if (mouse.down && p.reload <= 0) {
-        if (p.mods.gun.hp > 0) fire(p, p.ta, SHELLS[G.curShell]);
+        if (p.mods.gun.hp > 0) fire(p, p.ta, getCurrentShell(p));
         else p.reload = 0.4;
     }
 }

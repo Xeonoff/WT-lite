@@ -2,8 +2,7 @@ import { WORLD } from "./data.js";
 import { mkCv } from "./utils.js";
 
 export const G = {
-    freeRespawn: true,      
-    selectedTank: null,       
+    selectedTank: null,
     state: "menu",
     wave: 0,
     kills: 0,

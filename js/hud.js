@@ -1,7 +1,7 @@
 import { G } from "./state.js";
-import { WORLD, SHELLS, MNAMES, CREW_SHORT, MOD_LIST, CLASSES, RESPAWN_COSTS } from "./data.js";
+import { WORLD, MNAMES, CREW_SHORT, MOD_LIST, CLASSES, RESPAWN_COSTS } from "./data.js";
 import { $, clamp } from "./utils.js";
-import { mkTank, reloadTime } from "./entities.js";
+import { mkTank, reloadTime, getCurrentShell } from "./entities.js";
 import { sfx } from "./audio.js";
 import { genWorld } from "./world.js";
 import { drawTopScheme } from "./render.js";
@@ -113,14 +113,15 @@ export function useExtinguisher() {
 }
 
 export function selectShell(i) {
+    if (!G.player) return;
+    if (i >= G.player.cls.shells.length) return;
     if (G.curShell === i) return;
     G.curShell = i;
     sfx("click");
-    for (let k = 0; k < 3; k++)
+    for (let k = 0; k < G.player.cls.shells.length; k++)
         $("sh" + k).classList.toggle("active", k === i);
-    $("rLbl").textContent = SHELLS[i].name;
-    if (G.player)
-        G.player.reload = Math.max(G.player.reload, reloadTime(G.player) * 0.4);
+    $("rLbl").textContent = G.player.cls.shells[i].name;
+    G.player.reload = Math.max(G.player.reload, reloadTime(G.player) * 0.4);
 }
 
 export function buildDamagePanel() {
@@ -201,13 +202,14 @@ export function updHUD(dt) {
     const rt = reloadTime(p);
     const pr = p.mods.gun.hp <= 0 ? 0 : 1 - clamp(p.reload / rt, 0, 1);
     $("rfill").style.width = (pr * 100) + "%";
+    const shell = getCurrentShell(p);
     $("rtext").textContent =
         p.mods.gun.hp <= 0
             ? "ОРУДИЕ ВЫВЕДЕНО — ремонт (R)"
             : p.reload > 0
                 ? p.reload.toFixed(1) + " с"
-                : "ГОТОВ · " + SHELLS[G.curShell].name;
-    $("rLbl").textContent = SHELLS[G.curShell].name;
+                : "ГОТОВ · " + shell.name;
+    $("rLbl").textContent = shell.name;
     syncDamagePanel();
 }
 
@@ -227,6 +229,7 @@ export function startGame() {
         genWorld();
         G.player = mkTank("med", WORLD / 2, WORLD / 2, true);
         buildDamagePanel();
+        buildShellUI();
         G.enemies = [];
         G.shells = [];
         G.parts = [];
@@ -240,7 +243,6 @@ export function startGame() {
         G.score = 0;
         G.overT = 0;
         G.gameT = 0;
-        G.freeRespawn = true;
         G.selectedTank = null;
         $("feed").innerHTML = "";
         $("hud").classList.add("on");
@@ -282,7 +284,7 @@ export function showRespawnMenu() {
     const order = ["light", "med", "heavy"];
     for (const cls of order) {
         const c = CLASSES[cls];
-        const cost = G.freeRespawn ? 0 : RESPAWN_COSTS[cls];
+        const cost = RESPAWN_COSTS[cls];
         const affordable = G.score >= cost;
 
         const card = document.createElement("div");
@@ -294,10 +296,10 @@ export function showRespawnMenu() {
       <div class="tcStats">
         <span>Броня лба: <b>${c.armor.front} мм</b></span>
         <span>Скорость: <b>${c.speed}</b></span>
-        <span>Пробитие: <b>${c.pen} мм</b></span>
-        <span>Перезарядка: <b>${c.reload} с</b></span>
+        <span>Пробитие: <b>${c.shells[0].pen} мм</b></span>
+        <span>Перезарядка: <b>${c.shells[0].reload} с</b></span>
       </div>
-      <div class="tcCost${cost === 0 ? " free" : ""}">${cost === 0 ? "БЕСПЛАТНО" : cost + " очков"}</div>
+      <div class="tcCost">${cost} очков</div>
     `;
         if (affordable) {
             card.addEventListener("click", () => selectTankForRespawn(cls));
@@ -320,11 +322,10 @@ export function selectTankForRespawn(cls) {
 
 export function startRespawn() {
     if (!G.selectedTank) return;
-    const cost = G.freeRespawn ? 0 : RESPAWN_COSTS[G.selectedTank];
-    if (!G.freeRespawn && G.score < cost) return;
+    const cost = RESPAWN_COSTS[G.selectedTank];
+    if (G.score < cost) return;
 
     G.score -= cost;
-    G.freeRespawn = false;
     $("respawn").classList.add("hidden");
 
     import("./world.js").then(({ freeSpot }) => {
@@ -334,7 +335,9 @@ export function startRespawn() {
             G.state = "play";
             G.overT = 0;
             G.overCause = "";
+            G.curShell = 0;
             buildDamagePanel();
+            buildShellUI();
             G.CAM.x = G.player.x;
             G.CAM.y = G.player.y;
         });
@@ -355,4 +358,19 @@ export function drawXRAnim() {
     const fake = { mods: {} };
     G.xr.snap.forEach((m) => { fake.mods[m.t] = { hp: m.hp, max: m.max }; });
     drawTopScheme(g, 250, 131, 2.0, G.xr.cls, fake, G.xr.res, clamp(G.xr.t / 0.5, 0, 1));
+}
+
+export function buildShellUI() {
+    const box = $("shells");
+    box.innerHTML = "";
+    if (!G.player) return;
+    G.player.cls.shells.forEach((s, i) => {
+        const d = document.createElement("div");
+        d.className = "shell panel cut";
+        d.id = "sh" + i;
+        d.innerHTML = `<span class="key">${i + 1}</span><div class="n">${s.name}</div><div class="d">${s.type}</div><div class="p">▮ ${s.pen} мм</div>`;
+        box.appendChild(d);
+    });
+    G.curShell = 0;
+    if (box.children.length > 0) box.children[0].classList.add("active");
 }
