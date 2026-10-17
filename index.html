@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>WT LITE — танковый бой</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c2116'/%3E%3Crect x='5' y='15' width='22' height='9' fill='%23e0b23e'/%3E%3Ccircle cx='15' cy='14' r='5' fill='%23e0b23e'/%3E%3Crect x='17' y='12' width='12' height='3' fill='%23e0b23e'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./css/base.css">
+    <link rel="stylesheet" href="./css/hud.css">
+    <link rel="stylesheet" href="./css/screens.css">
+    <script type="importmap">{ "imports": { "three": "./js/vendor/three.module.js" } }</script>
+</head>
+
+<body class="inMenu">
+    <canvas id="gl"></canvas>
+    <canvas id="ov"></canvas>
+    <div id="vign"></div>
+
+    <!-- ═══════════════ HUD ═══════════════ -->
+    <div id="hud" class="hidden">
+        <div id="modePanel" class="panel"></div>
+        <div id="spotted"><span>◉</span> ВАС ВИДЯТ</div>
+        <div id="feed"></div>
+        <div id="banner"><h2 id="bnT"></h2><p id="bnS"></p></div>
+
+        <div id="leftCol">
+        <div id="crewLog"></div>
+        <div id="vpanel" class="panel cut ui-block">
+            <div class="vph"><b id="vpName"></b><span id="vpBR"></span></div>
+            <canvas id="schemeCv" width="552" height="236"></canvas>
+            <div class="grp">ЭКИПАЖ</div>
+            <div id="crewRow"></div>
+            <div class="grp">МОДУЛИ</div>
+            <div id="modRow"></div>
+            <div id="consRow">
+                <div class="cons" id="consR" title="Ремонт: восстанавливает модули до рабочего состояния. Машина стоит на месте."><span class="key">R</span><span class="nm">РЕМОНТ</span><span class="cs" id="consRs"></span><i class="cfill" id="consRf"></i></div>
+                <div class="cons" id="consT" title="Аптечка: лечит раненый экипаж"><span class="key">T</span><span class="nm">АПТЕЧКА</span><span class="cs" id="consTs"></span></div>
+                <div class="cons" id="consF" title="Огнетушитель"><span class="key">F</span><span class="nm">ОГНЕТУШ.</span><span class="cs" id="consFs"></span></div>
+                <div class="cons" id="consB" title="Артудар по точке под курсором (до 330 м)"><span class="key">B</span><span class="nm">АРТУДАР</span><span class="cs" id="consBs"></span><i class="cfill" id="consBf"></i></div>
+            </div>
+            <div id="alerts"></div>
+        </div>
+        </div>
+
+        <div id="weapon">
+            <div id="shells"></div>
+            <div id="reload" class="panel cut">
+                <div class="rl"><span id="rText">—</span><span id="rTime"></span></div>
+                <div id="rBar"><i id="rFill"></i></div>
+                <div class="rw"><span id="rWhy"></span><span class="spd"><span id="speed"></span> <b id="gear"></b></span></div>
+            </div>
+        </div>
+
+        <div id="mmWrap" class="panel cut">
+            <canvas id="minimap" width="220" height="220"></canvas>
+            <div class="mmf">ОВ: <b id="spBadge">0</b></div>
+        </div>
+
+        <div id="xray" class="panel">
+            <div class="xh"><span id="xrTitle"></span><span id="xrShell"></span></div>
+            <canvas id="xrCv" width="960" height="440"></canvas>
+            <div id="xrSub"></div>
+        </div>
+
+        <div id="hints" class="panel"><b>WASD</b> движение · <b>мышь</b> наводка · <b>ЛКМ</b> огонь · <b>ПКМ</b> бинокль · <b>колесо</b> масштаб · <b>1–4</b> снаряды ·
+            <b>R</b> ремонт · <b>T</b> аптечка · <b>F</b> огнетушитель · <b>B</b> артудар · <b>Tab</b> счёт · <b>X</b> рентген · <b>H</b> скрыть · <b>Esc</b> пауза</div>
+        <div id="scoreboard" class="panel hidden"></div>
+        <div id="fps" class="hidden"></div>
+    </div>
+
+    <!-- ═══════════════ ГЛАВНОЕ МЕНЮ ═══════════════ -->
+    <div id="menu" class="screen">
+        <div class="mcol">
+            <div class="brand">
+                <span class="chip">ТАНКОВЫЙ БОЙ · МОДУЛЬНЫЙ УРОН · РЕНТГЕН</span>
+                <h1 class="logo">WT <em>LITE</em></h1>
+            </div>
+            <div id="profChips"></div>
+            <h3 class="sh">РЕЖИМ</h3>
+            <div id="modeCards"></div>
+            <div class="mrow">
+                <label class="mapl">КАРТА <select id="mapSel"></select></label>
+                <label class="mapl">ПОГОДА <select id="wxSel"></select></label>
+                <span id="mapNote"></span>
+            </div>
+            <h3 class="sh">СЕТАП <small id="lineupBR"></small></h3>
+            <div id="lineupPrev"></div>
+            <div class="btnrow main">
+                <button class="big" data-act="play">В БОЙ ▸</button>
+                <button class="ghost" data-act="hangar">АНГАР</button>
+                <button class="ghost" data-act="ref">СПРАВОЧНИК</button>
+                <button class="ghost" data-act="settings">НАСТРОЙКИ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ АНГАР ═══════════════ -->
+    <div id="hangarScr" class="screen hidden">
+        <div class="hTop">
+            <button class="ghost" data-act="menu">◂ МЕНЮ</button>
+            <div id="hNations"></div>
+        </div>
+        <div class="hBody">
+            <div id="tree" class="panel scrollable"></div>
+            <div id="hDetail" class="panel scrollable"></div>
+        </div>
+        <div id="hLineup" class="panel"></div>
+    </div>
+
+    <!-- ═══════════════ ВОЗРОЖДЕНИЕ ═══════════════ -->
+    <div id="spawnScr" class="screen dim hidden">
+        <div class="obox panel cut ui-block">
+            <h2 id="spTitle">ВЫБОР ТЕХНИКИ</h2>
+            <div class="sub" id="spCause"></div>
+            <div class="orow"><span>Очки возрождения</span><b id="spSP">0</b></div>
+            <div id="spCards"></div>
+            <div id="spNone" class="note hidden">Доступной техники нет. Наблюдайте за боем или покиньте его — награда сохранится.</div>
+            <div class="btnrow">
+                <button class="big" id="spGo" data-act="spawn">В БОЙ ▸</button>
+                <button class="ghost" data-act="leave">ПОКИНУТЬ БОЙ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ ПАУЗА ═══════════════ -->
+    <div id="pauseScr" class="screen dim hidden">
+        <div class="obox panel cut small ui-block">
+            <h2>ПАУЗА</h2>
+            <div class="sub">бой остановлен</div>
+            <div class="btnrow col">
+                <button class="big" data-act="resume">ПРОДОЛЖИТЬ</button>
+                <button class="ghost hidden" id="pChange" data-act="change">СМЕНИТЬ ТЕХНИКУ</button>
+                <button class="ghost" data-act="settings">НАСТРОЙКИ</button>
+                <button class="ghost" data-act="ref">СПРАВОЧНИК</button>
+                <button class="ghost danger" data-act="leave">ПОКИНУТЬ БОЙ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ ИТОГИ ═══════════════ -->
+    <div id="resultScr" class="screen dim hidden">
+        <div class="obox panel cut ui-block">
+            <h2 id="resTitle"></h2>
+            <div class="sub" id="resReason"></div>
+            <div id="resStats"></div>
+            <div id="resRP"></div>
+            <div class="btnrow">
+                <button class="big" data-act="again">ЕЩЁ БОЙ ▸</button>
+                <button class="ghost" data-act="toHangar">В АНГАР</button>
+                <button class="ghost" data-act="toMenu">МЕНЮ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ НАСТРОЙКИ / СПРАВОЧНИК ═══════════════ -->
+    <div id="settingsScr" class="screen modal hidden">
+        <div class="obox panel cut wide ui-block">
+            <div class="mh"><h2>НАСТРОЙКИ</h2><button class="x" data-act="closeModal">✕</button></div>
+            <div id="setBody" class="scrollable"></div>
+        </div>
+    </div>
+    <div id="refScr" class="screen modal hidden">
+        <div class="obox panel cut wide tall ui-block">
+            <div class="mh"><h2>СПРАВОЧНИК</h2><button class="x" data-act="closeModal">✕</button></div>
+            <div id="refTabs"></div>
+            <div id="refBody" class="scrollable"></div>
+        </div>
+    </div>
+
+    <div id="loading" class="screen hidden"><div class="ld"><div class="spin"></div>ПОДГОТОВКА К БОЮ…</div></div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+
+</html>

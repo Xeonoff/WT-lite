@@ -1,0 +1,336 @@
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+#hud .ui-block { pointer-events: auto; }
+
+/* ─────────── режим ─────────── */
+#modePanel {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 14px;
+    clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
+}
+#modePanel .tk { display: flex; align-items: center; gap: 8px; }
+#modePanel .tk b { font-family: "Russo One"; font-size: 18px; min-width: 38px; text-align: center; }
+#modePanel .tk.a b { color: var(--ally); }
+#modePanel .tk.e b { color: var(--enemy); }
+#modePanel .bar { width: 150px; height: 8px; background: rgba(0, 0, 0, .5); border: 1px solid rgba(255, 255, 255, .1); overflow: hidden; }
+#modePanel .tk.a .bar { transform: scaleX(-1); }
+#modePanel .bar i { display: block; height: 100%; transition: width .3s; }
+#modePanel .tk.a .bar i { background: linear-gradient(90deg, #2f7fd0, var(--ally)); }
+#modePanel .tk.e .bar i { background: linear-gradient(90deg, #d0402f, var(--enemy)); }
+#modePanel .pts { display: flex; gap: 6px; }
+#modePanel .pt {
+    width: 30px; height: 30px; position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Russo One"; font-size: 15px;
+    border: 2px solid #e8e2cf; background: rgba(0, 0, 0, .45); transform: rotate(45deg);
+}
+#modePanel .pt span { transform: rotate(-45deg); position: relative; z-index: 2; }
+#modePanel .pt.a { border-color: var(--ally); background: rgba(89, 180, 255, .35); }
+#modePanel .pt.e { border-color: var(--enemy); background: rgba(255, 90, 72, .35); }
+#modePanel .pt .pp { position: absolute; left: 0; bottom: 0; width: 100%; z-index: 1; opacity: .7; }
+#modePanel .pt .pp.a { background: var(--ally); }
+#modePanel .pt .pp.e { background: var(--enemy); }
+#modePanel .timer { font-family: "Russo One"; font-size: 13px; color: var(--muted); margin-left: 4px; }
+#modePanel .wave { display: flex; align-items: baseline; gap: 8px; }
+#modePanel .wave span { font-size: 10px; letter-spacing: .25em; color: var(--muted); }
+#modePanel .wave b { font-family: "Russo One"; font-size: 22px; color: var(--brass); }
+#modePanel .winfo { font-size: 13px; color: var(--paper); }
+#modePanel .winfo b { color: var(--brass); }
+#modePanel .capw { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+#modePanel .capw .bar { width: 120px; }
+#modePanel .capw .bar i { background: var(--enemy); }
+
+#spotted {
+    position: absolute;
+    top: 58px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: "Russo One";
+    font-size: 12px;
+    letter-spacing: .14em;
+    color: #ffd2cc;
+    background: rgba(120, 24, 16, .75);
+    border: 1px solid var(--enemy);
+    padding: 4px 12px;
+    opacity: 0;
+    transition: opacity .25s;
+}
+#spotted.on { opacity: 1; }
+#spotted span { color: var(--enemy); animation: blink 1s infinite; }
+
+/* ─────────── лента ─────────── */
+#feed {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    width: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-end;
+}
+.fitem {
+    font-size: 12.5px;
+    padding: 5px 10px;
+    background: rgba(12, 15, 9, .78);
+    border-right: 3px solid var(--steel);
+    animation: fin .25s ease;
+    transition: opacity .5s;
+}
+.fitem i { font-style: normal; opacity: .75; }
+.fitem .a { color: var(--ally); }
+.fitem .e { color: var(--enemy); }
+.fitem.mine { border-color: var(--brass); background: rgba(60, 48, 14, .8); }
+.fitem.me { border-color: var(--enemy); }
+.fitem.fade, .litem.fade { opacity: 0; }
+@keyframes fin { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+#leftCol {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#crewLog {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 3px;
+}
+.litem {
+    font-size: 12px;
+    padding: 4px 9px;
+    background: rgba(12, 15, 9, .72);
+    border-left: 3px solid var(--steel);
+    animation: fin .2s ease;
+    transition: opacity .5s;
+}
+.litem.bad { border-color: var(--bad); color: #ffd2cd; }
+.litem.fire { border-color: #ff8c42; color: #ffd8b8; animation: fin .2s ease, blink .6s 3; }
+.litem.good { border-color: var(--ok); color: #d4f4d8; }
+.litem.warn { border-color: var(--warn); color: #fff0c0; }
+.litem.swap { border-color: var(--ally); color: #d6ecff; }
+.litem.tip { border-color: var(--brass); color: #f3e3b0; background: rgba(40, 34, 12, .85); }
+.litem.tip b { color: var(--brass); }
+
+#banner {
+    position: absolute;
+    top: 17%;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    opacity: 0;
+    white-space: nowrap;
+}
+#banner.show { animation: ban 3s ease forwards; }
+#banner h2 { font-family: "Russo One"; font-size: clamp(30px, 5vw, 58px); letter-spacing: .08em; text-shadow: 0 4px 0 rgba(0, 0, 0, .45), 0 0 34px rgba(224, 178, 62, .3); }
+#banner p { font-size: 14px; letter-spacing: .32em; text-transform: uppercase; color: var(--brass); margin-top: 2px; }
+#banner.win h2 { color: #bff2c6; }
+#banner.lose h2 { color: #ffb8ad; }
+@keyframes ban {
+    0% { opacity: 0; transform: translateX(-50%) translateY(20px) scale(.95); }
+    12% { opacity: 1; transform: translateX(-50%); }
+    80% { opacity: 1; }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-14px); }
+}
+
+/* ─────────── состояние машины ─────────── */
+#vpanel { width: 300px; padding: 9px 12px 9px; }
+.vph { display: flex; justify-content: space-between; align-items: baseline; }
+.vph b { font-family: "Russo One"; font-size: 14px; letter-spacing: .03em; }
+.vph span { font-size: 10px; color: var(--muted); letter-spacing: .12em; }
+#schemeCv { width: 276px; height: 118px; display: block; margin-top: 3px; }
+.grp { font-family: "Russo One"; font-size: 9px; letter-spacing: .22em; color: var(--muted); margin: 5px 0 3px; }
+#crewRow { display: grid; gap: 4px; }
+.crew {
+    position: relative;
+    background: rgba(8, 10, 6, .55);
+    border: 1px solid var(--line);
+    padding: 3px 2px 2px;
+    text-align: center;
+    font-size: 10px;
+}
+.crew .cdot { display: block; width: 10px; height: 10px; border-radius: 50%; margin: 1px auto 1px; background: var(--ok); }
+.crew b { font-family: "Russo One"; font-weight: 400; font-size: 10px; }
+.crew .chp { display: block; height: 3px; background: #11140c; margin: 2px 3px 0; }
+.crew .chp i { display: block; height: 100%; background: var(--ok); }
+.crew .csw { position: absolute; top: -1px; right: 2px; font-size: 8px; color: var(--ally); }
+.crew.dmg .cdot, .crew.dmg .chp i { background: var(--warn); }
+.crew.crit .cdot, .crew.crit .chp i { background: var(--crit); }
+.crew.dead { opacity: .55; }
+.crew.dead .cdot { background: var(--bad); }
+.crew.dead::after { content: "✕"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--bad); font: 18px "Russo One"; }
+.crew.empty { opacity: .45; border-style: dashed; }
+.crew.empty .cdot { background: transparent; border: 1px dashed var(--muted); }
+.crew.incoming { border-color: var(--ally); animation: blink 1s infinite; }
+
+#modRow { display: flex; flex-wrap: wrap; gap: 3px; }
+.mod {
+    font-family: "Russo One";
+    font-size: 8.5px;
+    letter-spacing: .03em;
+    padding: 3px 5px 3px 4px;
+    border: 1px solid var(--line);
+    background: rgba(8, 10, 6, .55);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.mod i { width: 7px; height: 7px; border-radius: 1px; background: #b9c6d2; }
+.mod.dmg i { background: var(--warn); }
+.mod.crit i { background: var(--crit); }
+.mod.dead { border-color: var(--bad); color: #ffb3aa; }
+.mod.dead i { background: var(--bad); }
+
+#consRow { display: flex; gap: 5px; margin-top: 7px; }
+.cons {
+    flex: 1;
+    position: relative;
+    background: rgba(8, 10, 6, .6);
+    border: 1px solid var(--line);
+    padding: 15px 4px 4px;
+    text-align: center;
+    overflow: hidden;
+}
+.cons .key { position: absolute; top: 2px; left: 3px; font-family: "Russo One"; font-size: 9px; color: #11140b; background: var(--brass); padding: 0 4px; }
+.cons .nm { font-family: "Russo One"; font-size: 8.5px; color: #c3cba6; position: relative; z-index: 2; }
+.cons .cs { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--paper); z-index: 2; }
+.cons .cfill { position: absolute; left: 0; bottom: 0; height: 100%; width: 0; background: rgba(224, 178, 62, .3); z-index: 1; }
+.cons.active { border-color: var(--brass); }
+.cons.need { border-color: rgba(255, 210, 63, .6); }
+.cons.off { opacity: .45; }
+.cons.ready { border-color: rgba(98, 226, 126, .55); }
+.cons.ready .cs { color: var(--ok); }
+.cons.urgent { border-color: #ff8c42; box-shadow: 0 0 10px rgba(255, 140, 66, .5); animation: blink .6s infinite; }
+
+#alerts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; min-height: 0; }
+.alert { font-family: "Russo One"; font-size: 9.5px; letter-spacing: .05em; padding: 3px 7px; }
+.alert.fire { background: #7a2018; color: #ffd2c0; border: 1px solid #ff5147; animation: blink .6s infinite; }
+.alert.bad { background: #3d1512; color: #ffcbc4; border: 1px solid var(--bad); }
+.alert.crit { background: #3d2a10; color: #ffe1b8; border: 1px solid var(--crit); }
+.alert.swap { background: #10283d; color: #d6ecff; border: 1px solid var(--ally); }
+
+/* ─────────── оружие ─────────── */
+#weapon {
+    position: absolute;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+}
+#shells { display: flex; gap: 6px; }
+.shell {
+    width: 124px;
+    padding: 6px 8px 5px;
+    position: relative;
+    background: linear-gradient(180deg, rgba(46, 54, 34, .86), rgba(18, 22, 12, .92));
+    border: 1px solid var(--line);
+    cursor: pointer;
+    transition: transform .1s, box-shadow .1s;
+}
+.shell .key { position: absolute; top: -8px; left: -4px; font-family: "Russo One"; font-size: 10px; background: var(--olv-d); border: 1px solid var(--line); padding: 0 5px; }
+.shell .sn { font-family: "Russo One"; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell .st { font-size: 9.5px; letter-spacing: .03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell .sp { display: flex; justify-content: space-between; font-size: 11px; margin-top: 2px; }
+.shell .sp b { color: var(--brass); }
+.shell .sp .cnt { color: var(--paper); }
+.shell.active { box-shadow: 0 0 0 2px var(--brass), 0 0 16px rgba(224, 178, 62, .35); transform: translateY(-3px); }
+.shell.empty { opacity: .4; }
+
+#reload { width: 400px; padding: 6px 11px 6px; }
+#reload .rl { display: flex; justify-content: space-between; font-family: "Russo One"; font-size: 12px; letter-spacing: .05em; }
+#rText.ok { color: var(--ok); }
+#rText.bad { color: var(--bad); }
+#rTime { color: var(--muted); font-size: 11px; }
+#rBar { height: 7px; margin-top: 4px; background: #11140c; border: 1px solid var(--line); }
+#rFill { display: block; height: 100%; width: 0; background: repeating-linear-gradient(-45deg, var(--brass) 0 6px, var(--brass-d) 6px 12px); }
+#reload .rw { display: flex; justify-content: space-between; align-items: baseline; margin-top: 3px; font-size: 10.5px; min-height: 14px; }
+#rWhy { color: var(--crit); }
+.spd { color: var(--muted); white-space: nowrap; }
+#speed b { font-family: "Russo One"; font-size: 14px; color: var(--paper); }
+#gear { font-family: "Russo One"; color: var(--brass); margin-left: 4px; }
+
+/* ─────────── миникарта ─────────── */
+#mmWrap { position: absolute; right: 14px; bottom: 14px; padding: 7px; }
+#minimap { display: block; width: 220px; height: 220px; }
+.mmf { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: right; }
+.mmf b { color: var(--brass); font-family: "Russo One"; }
+
+/* ─────────── рентген ─────────── */
+#xray {
+    position: absolute;
+    right: 14px;
+    top: 214px;
+    width: 500px;
+    opacity: 0;
+    transform: translateX(40px);
+    transition: transform .22s cubic-bezier(.2, 1.4, .4, 1), opacity .22s;
+    background: linear-gradient(180deg, rgba(20, 27, 36, .92), rgba(10, 14, 19, .95));
+    border-color: #35414e;
+}
+#xray.show { opacity: 1; transform: none; }
+#xray.incoming { border-color: rgba(255, 81, 71, .6); }
+#xray .xh { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 12px 2px; gap: 10px; }
+#xrTitle { font-family: "Russo One"; font-size: 19px; letter-spacing: .08em; color: #a9bccd; }
+#xrTitle.pen { color: var(--bad); }
+#xrTitle.rico { color: var(--warn); }
+#xrShell { font-size: 11px; color: var(--brass); letter-spacing: .05em; text-align: right; }
+#xrCv { display: block; width: 480px; height: 220px; margin: 0 10px; }
+#xrSub { padding: 4px 12px 9px; font-size: 11.5px; color: #cfd8e2; line-height: 1.55; }
+#xrSub b { color: #fff; }
+#xrSub .ko { color: #ff8b80; }
+#xrSub .md { color: var(--crit); }
+#xrSub .fi { color: #ffb070; }
+
+#hints {
+    position: absolute;
+    right: 14px;
+    bottom: 270px;
+    width: 236px;
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: #b8c19c;
+    padding: 6px 9px;
+    opacity: .85;
+}
+#hints b { color: var(--brass); font-family: "Russo One"; font-weight: 400; }
+
+#scoreboard {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 18px;
+    padding: 12px 16px;
+    z-index: 4;
+}
+.sbcol h3 { font-family: "Russo One"; font-size: 13px; letter-spacing: .16em; margin-bottom: 6px; }
+.sbcol.a h3 { color: var(--ally); }
+.sbcol.e h3 { color: var(--enemy); }
+.sbcol table { border-collapse: collapse; font-size: 12px; min-width: 300px; }
+.sbcol th { text-align: left; font-weight: 500; color: var(--muted); font-size: 10px; padding: 2px 6px; }
+.sbcol td { padding: 3px 6px; border-top: 1px dashed rgba(150, 162, 110, .2); }
+.sbcol tr.dead td { opacity: .45; text-decoration: line-through; }
+.sbcol tr.me td { color: var(--brass); }
+
+#fps { position: absolute; left: 8px; top: 6px; font: 11px monospace; color: #9fb07a; }
+
+@media (max-width: 1100px) {
+    #feed { width: 280px; }
+    #xray { width: 400px; }
+    #xrCv { width: 380px; height: 180px; }
+    #reload { width: 320px; }
+    .shell { width: 104px; }
+    #hints { display: none; }
+}
