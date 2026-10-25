@@ -27,41 +27,6 @@ function impulse(sec, decay) {
     return b;
 }
 
-/* ─────────────────────── Голос экипажа ─────────────────────── */
-class CrewVoice {
-    constructor() {
-        this.voice = null;
-        this.busyUntil = 0;
-        this.prio = 0;
-        this.last = new Map();
-        if (typeof speechSynthesis !== "undefined") {
-            const pickV = () => {
-                const vs = speechSynthesis.getVoices();
-                this.voice = vs.find((v) => /ru/i.test(v.lang) && /male|pavel|dmitry|мужск/i.test(v.name)) || vs.find((v) => /ru/i.test(v.lang)) || null;
-            };
-            pickV();
-            speechSynthesis.onvoiceschanged = pickV;
-        }
-    }
-    say(text, prio = 1) {
-        if (!Settings.get("voice") || !this.voice || typeof speechSynthesis === "undefined") return;
-        const now = performance.now();
-        if ((this.last.get(text) || 0) > now - 3500) return;
-        if (now < this.busyUntil && prio <= this.prio) return;
-        if (now < this.busyUntil) speechSynthesis.cancel();
-        this.last.set(text, now);
-        const u = new SpeechSynthesisUtterance(text);
-        u.voice = this.voice;
-        u.lang = this.voice.lang;
-        u.rate = 1.25;
-        u.pitch = 0.85;
-        u.volume = clamp(Settings.get("master") * 0.9, 0, 1);
-        this.prio = prio;
-        this.busyUntil = now + 300 + text.length * 70;
-        speechSynthesis.speak(u);
-    }
-}
-
 /* ─────────────────────── Синтез петель двигателя и гусениц ─────────────────────── */
 const ENGINE_REF_RPM = 1000;
 const TRACK_HITS = 24;
@@ -266,7 +231,6 @@ export class AudioSys {
     constructor() {
         this.voices = new Map();
         this.lx = 0; this.lz = 0;
-        this.voice = new CrewVoice();
         this.muted = false;
         Events.on("settings", () => this.applyVolumes());
     }
@@ -613,5 +577,4 @@ export class AudioSys {
         }
     }
 
-    say(text, prio) { this.voice.say(text, prio); }
 }

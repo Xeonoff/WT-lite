@@ -1,5 +1,5 @@
 import { rayAabb, clamp, DEG } from "../core/Utils.js";
-import { SHELL_TYPES, penAt } from "../data/Shells.js";
+import { SHELL_TYPES, penAt, ricoChance } from "../data/Shells.js";
 
 /* ─────────── Преобразования систем координат ───────────
  * hull   — центр корпуса на земле, x вперёд, y вверх, z вправо
@@ -108,6 +108,7 @@ export function raycastVehicle(v, p0, dir, maxT, skip) {
             if (!r || r.t0 < 0) continue;
             n = [0, 0, 0]; n[r.axis] = r.sign;
             face = r.axis === 2 ? "side" : r.axis === 1 ? (r.sign > 0 ? "roof" : "bottom") : r.sign > 0 ? "front" : "rear";
+            if (part.faceMap && part.faceMap[face]) face = part.faceMap[face];
         }
         if (!best || r.t0 < best.t) best = { part, t: r.t0, tExit: r.t1, o: o2, d: d2, n, face };
     }
@@ -121,7 +122,7 @@ export function raycastVehicle(v, p0, dir, maxT, skip) {
 }
 
 const PLATE_NAMES = {
-    hull: { front: "ВЛД", lower: "НЛД", side: "борт корпуса", rear: "корма корпуса", roof: "крыша корпуса", bottom: "днище" },
+    hull: { front: "ВЛД", glacis: "лобовой скос", nose: "средний лобовой лист", lower: "НЛД", side: "борт корпуса", rear: "корма корпуса", roof: "крыша корпуса", bottom: "днище" },
     turret: { front: "лоб башни", side: "борт башни", rear: "корма башни", roof: "крыша башни", bottom: "погон" },
     casemate: { front: "лоб рубки", side: "борт рубки", rear: "корма рубки", roof: "крыша рубки", bottom: "погон" },
 };
@@ -146,13 +147,15 @@ export function plateInfo(v, hit) {
         thick = a[0];
         // наклон бортов корпуса и стенок башни — аналитически
         if ((id !== "hull" || face === "side") && face !== "roof") vslope = a[1] || 0;
+        if (id === "hull" && face === "side" && hit.part.sideSlope !== undefined) vslope = hit.part.sideSlope;
     }
     if (id === "turret" && face === "roof" && v.def.turret.open) thick = 0;
-    return { thick, vslope, name: names[face] || face, face };
+    const name = (id === "hull" && v.def.noseNames && v.def.noseNames[face]) || names[face] || face;
+    return { thick, vslope, name, face };
 }
 
 /** Нормаль с учётом наклона листа от вертикали */
-function tiltedNormal(n, vslope) {
+export function tiltedNormal(n, vslope) {
     if (!vslope || Math.abs(n[1]) > 0.3) return n;
     const hl = Math.hypot(n[0], n[2]) || 1;
     const c = Math.cos(vslope * DEG), s = Math.sin(vslope * DEG);
@@ -174,8 +177,7 @@ export function evalPlate(shell, v, hit, pen0) {
     const norm = shell.type === "HE" ? 0 : overmatch ? Math.max(T.norm, theta * 0.35) : T.norm;
     const thetaN = Math.max(0, theta - norm);
     const eff = info.thick / Math.max(0.14, Math.cos(thetaN * DEG));
-    const ricoP = shell.type === "HE" || overmatch || info.thick === 0 ? 0 :
-        clamp((theta - T.ricoStart) / (T.ricoFull - T.ricoStart), 0, 1);
+    const ricoP = shell.type === "HE" || overmatch || info.thick === 0 ? 0 : ricoChance(T, theta);
     return { info, theta, eff, pen: pen0, ricoP, overmatch, canPen: pen0 >= eff, normal: n };
 }
 
@@ -194,12 +196,11 @@ export function traceShot(shell, v, p0, dir, maxT, distance) {
     let pen = penAt(shell, distance);
     const skip = new Set();
     const layers = [];
-    let origin = p0;
-    let tAcc = 0;
+    // каждый следующий слой ищем от исходной точки, пропуская уже пройденные экраны:
+    // выход из гусеницы лежит вплотную к борту, и луч оттуда начинался бы «внутри» корпуса
     for (let i = 0; i < 4; i++) {
-        const hit = raycastVehicle(v, origin, dir, maxT - tAcc, skip);
+        const hit = raycastVehicle(v, p0, dir, maxT, skip);
         if (!hit) return { layers, main: null, pen };
-        hit.t += tAcc;
         const ev = evalPlate(shell, v, hit, pen);
         if (hit.part.spaced) {
             layers.push({ hit, ev });
@@ -208,10 +209,6 @@ export function traceShot(shell, v, p0, dir, maxT, distance) {
             const loss = spacedLoss(shell, ev);
             pen = shell.type === "HEAT" ? pen * (1 - loss) - ev.info.thick : pen - loss;
             if (pen <= 0) return { layers, main: null, pen: 0, stoppedBy: hit };
-            // продолжаем от точки выхода из экрана
-            const tt = Math.max(hit.tExit - (hit.t - tAcc), 0) + (hit.t - tAcc) + 0.01;
-            origin = [origin[0] + dir[0] * tt, origin[1] + dir[1] * tt, origin[2] + dir[2] * tt];
-            tAcc += tt;
             continue;
         }
         return { layers, main: { hit, ev: evalPlate(shell, v, hit, pen) }, pen };

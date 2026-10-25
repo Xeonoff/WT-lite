@@ -68,14 +68,22 @@ export function drawScheme(g, o) {
     g.fillStyle = "rgba(150,175,200,.07)";
     g.strokeStyle = "#a9bccd";
     g.lineWidth = 1.6;
-    g.fillRect(X(-L / 2), Y(-iw / 2), L * s, iw * s);
-    g.strokeRect(X(-L / 2), Y(-iw / 2), L * s, iw * s);
-    // зона ВЛД
+    // корпус с надгусеничными нишами (по их внешней кромке)
+    const hw = def.form && def.form.has ? def.form.sw : iw / 2;
+    g.fillRect(X(-L / 2), Y(-hw), L * s, hw * 2 * s);
+    g.strokeRect(X(-L / 2), Y(-hw), L * s, hw * 2 * s);
+    if (hw > iw / 2 + 0.01) {
+        g.strokeStyle = "rgba(169,188,205,.3)";
+        g.setLineDash([4, 4]);
+        g.strokeRect(X(-L / 2), Y(-iw / 2), L * s, iw * s);
+        g.setLineDash([]);
+    }
+    // зона лобовых листов
     const ft = def.profile.ft;
     g.fillStyle = "rgba(150,175,200,.12)";
-    g.fillRect(X(L / 2 - ft), Y(-iw / 2), ft * s, iw * s);
+    g.fillRect(X(L / 2 - ft), Y(-hw), ft * s, hw * 2 * s);
     g.strokeStyle = "rgba(169,188,205,.35)";
-    g.beginPath(); g.moveTo(X(L / 2 - ft), Y(-iw / 2)); g.lineTo(X(L / 2 - ft), Y(iw / 2)); g.stroke();
+    g.beginPath(); g.moveTo(X(L / 2 - ft), Y(-hw)); g.lineTo(X(L / 2 - ft), Y(hw)); g.stroke();
 
     // модули корпуса и башни
     const drawMod = (m) => {
@@ -112,7 +120,7 @@ export function drawScheme(g, o) {
         if (!o.compact && o.labels && m.type !== "ammo") {
             const c = P(m.frame, m.c);
             g.fillStyle = "rgba(220,230,240,.55)";
-            g.font = "9px Rubik, sans-serif";
+            g.font = "9px Inter, sans-serif";
             g.textAlign = "center";
             g.fillText(shortMod(m.type), c[0], c[1] + 3);
         }
@@ -165,7 +173,7 @@ export function drawScheme(g, o) {
         if (!c.alive) cross(g, px, py, r * 0.8, "#3b0806");
         if (!o.compact && o.labels) {
             g.fillStyle = "rgba(230,236,242,.8)";
-            g.font = "600 9px Rubik, sans-serif";
+            g.font = "600 9px Inter, sans-serif";
             g.textAlign = "center";
             g.fillText(CREW_SEATS[sname].short, px, py + r + 10);
         }
@@ -182,7 +190,7 @@ export function drawScheme(g, o) {
 
     if (o.labels && !o.compact) {
         g.fillStyle = "rgba(160,180,200,.7)";
-        g.font = "10px Rubik, sans-serif";
+        g.font = "10px Inter, sans-serif";
         g.textAlign = "left";
         g.fillText("НОС ▸", X(L / 2) + 6, Y(-iw / 2) - 6);
     }

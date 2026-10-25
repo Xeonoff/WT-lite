@@ -7,7 +7,8 @@
     <title>WT LITE — танковый бой</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c2116'/%3E%3Crect x='5' y='15' width='22' height='9' fill='%23e0b23e'/%3E%3Ccircle cx='15' cy='14' r='5' fill='%23e0b23e'/%3E%3Crect x='17' y='12' width='12' height='3' fill='%23e0b23e'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/hud.css">
     <link rel="stylesheet" href="./css/screens.css">
@@ -69,6 +70,7 @@
             <b>R</b> ремонт · <b>T</b> аптечка · <b>F</b> огнетушитель · <b>B</b> артудар · <b>Tab</b> счёт · <b>X</b> рентген · <b>H</b> скрыть · <b>Esc</b> пауза</div>
         <div id="scoreboard" class="panel hidden"></div>
         <div id="fps" class="hidden"></div>
+        <div id="chatBox"><div id="chatLines"></div><input id="chatIn" class="hidden ui-block" maxlength="160" autocomplete="off" placeholder="Сообщение всем — Enter, отмена — Esc"></div>
     </div>
 
     <!-- ═══════════════ ГЛАВНОЕ МЕНЮ ═══════════════ -->
@@ -90,6 +92,7 @@
             <div id="lineupPrev"></div>
             <div class="btnrow main">
                 <button class="big" data-act="play">В БОЙ ▸</button>
+                <button class="big alt" data-act="online">ОНЛАЙН</button>
                 <button class="ghost" data-act="hangar">АНГАР</button>
                 <button class="ghost" data-act="ref">СПРАВОЧНИК</button>
                 <button class="ghost" data-act="settings">НАСТРОЙКИ</button>
@@ -105,9 +108,72 @@
         </div>
         <div class="hBody">
             <div id="tree" class="panel scrollable"></div>
+            <div id="hView">
+                <div id="hLegend" class="hidden"></div>
+                <div id="hViewHint">ЛКМ + движение — вращать · колесо — масштаб · двойной клик — сброс</div>
+                <div id="hViewBar" class="seg">
+                    <button class="segb on" data-act="hMode" data-v="model">Модель</button>
+                    <button class="segb" data-act="hMode" data-v="armor">Броня</button>
+                    <button class="segb" data-act="hMode" data-v="modules">Модули</button>
+                    <button class="segb icon" data-act="hReset" title="Сбросить вид">⟲</button>
+                </div>
+            </div>
             <div id="hDetail" class="panel scrollable"></div>
         </div>
         <div id="hLineup" class="panel"></div>
+    </div>
+
+    <!-- ═══════════════ ОНЛАЙН ═══════════════ -->
+    <div id="onlineScr" class="screen hidden">
+        <div class="olWrap">
+            <div class="olTop">
+                <button class="ghost" data-act="olBack">◂ МЕНЮ</button>
+                <h2 class="olTitle">Онлайн-бои</h2>
+                <span id="olStatus" class="olStatus">не подключено</span>
+            </div>
+
+            <div id="olConnect" class="panel olCard olNarrow">
+                <h3>Подключение</h3>
+                <label class="olField"><span>Позывной</span><input id="olName" maxlength="18" autocomplete="off" spellcheck="false"></label>
+                <label class="olField"><span>Сервер</span><input id="olServer" autocomplete="off" spellcheck="false"></label>
+                <p class="note">Если игра открыта с сервера (например, на Render) — адрес подставлен автоматически. Для локального сервера: <b>ws://localhost:8080/ws</b>.</p>
+                <div class="btnrow"><button class="big" id="olConnectBtn" data-act="olConnect">ПОДКЛЮЧИТЬСЯ</button></div>
+                <p class="olErr" id="olErr"></p>
+            </div>
+
+            <div id="olLobby" class="olGrid hidden">
+                <div class="panel olCard">
+                    <div class="olHead"><h3>Комнаты</h3><button class="ghost sm" data-act="olRefresh" title="Обновить">⟳</button></div>
+                    <div id="olRooms" class="scrollable olList"></div>
+                </div>
+                <div class="panel olCard">
+                    <h3>Новая комната</h3>
+                    <label class="olField"><span>Название</span><input id="olRoomName" maxlength="18" autocomplete="off"></label>
+                    <label class="olField"><span>Карта</span><select id="olMap"></select></label>
+                    <label class="olField"><span>Машин в команде</span><select id="olSize"></select></label>
+                    <p class="note">Свободные места занимают боты. Команды: СССР против Германии, сетап — из ангара.</p>
+                    <div class="btnrow"><button class="big" data-act="olCreate">СОЗДАТЬ</button></div>
+                </div>
+            </div>
+
+            <div id="olRoom" class="olRoomGrid hidden">
+                <div class="panel olCard">
+                    <div class="olHead"><h3 id="olRoomTitle"></h3><span id="olRoomInfo" class="olMeta"></span></div>
+                    <div class="olTeams"><div class="olTeam" id="olTeam0"></div><div class="olTeam" id="olTeam1"></div></div>
+                    <div id="olHostSet" class="olSet"></div>
+                    <div class="btnrow">
+                        <button class="big" id="olReadyBtn" data-act="olReady">ГОТОВ</button>
+                        <button class="big alt hidden" id="olStartBtn" data-act="olStart">НАЧАТЬ БОЙ ▸</button>
+                        <button class="ghost" data-act="olLeaveRoom">ПОКИНУТЬ КОМНАТУ</button>
+                    </div>
+                </div>
+                <div class="panel olCard olChat">
+                    <h3>Чат</h3>
+                    <div id="olChatLog" class="scrollable olChatLog"></div>
+                    <input id="olChatIn" maxlength="160" autocomplete="off" placeholder="Сообщение… (Enter)">
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ═══════════════ ВОЗРОЖДЕНИЕ ═══════════════ -->
@@ -129,7 +195,7 @@
     <div id="pauseScr" class="screen dim hidden">
         <div class="obox panel cut small ui-block">
             <h2>ПАУЗА</h2>
-            <div class="sub">бой остановлен</div>
+            <div class="sub" id="pauseSub">бой остановлен</div>
             <div class="btnrow col">
                 <button class="big" data-act="resume">ПРОДОЛЖИТЬ</button>
                 <button class="ghost hidden" id="pChange" data-act="change">СМЕНИТЬ ТЕХНИКУ</button>
@@ -148,7 +214,7 @@
             <div id="resStats"></div>
             <div id="resRP"></div>
             <div class="btnrow">
-                <button class="big" data-act="again">ЕЩЁ БОЙ ▸</button>
+                <button class="big" data-act="again" id="resAgain">ЕЩЁ БОЙ ▸</button>
                 <button class="ghost" data-act="toHangar">В АНГАР</button>
                 <button class="ghost" data-act="toMenu">МЕНЮ</button>
             </div>
@@ -170,6 +236,7 @@
         </div>
     </div>
 
+    <div id="armorTip" class="hidden"></div>
     <div id="loading" class="screen hidden"><div class="ld"><div class="spin"></div>ПОДГОТОВКА К БОЮ…</div></div>
 
     <script type="module" src="./js/main.js"></script>

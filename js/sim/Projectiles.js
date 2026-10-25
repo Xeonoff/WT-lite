@@ -60,6 +60,14 @@ function stepShot(battle, s, dt) {
     }
 }
 
+/** Куда придёт выстрел по прямой: первое препятствие, машина или земля (для индикатора прицела) */
+export function probeShot(battle, shooter, p0, dir, maxL) {
+    const p1 = [p0[0] + dir[0] * maxL, p0[1] + dir[1] * maxL, p0[2] + dir[2] * maxL];
+    const hit = firstHit(battle, { ignore: shooter, d: dir }, p0, p1, maxL);
+    if (hit) hit.point = [p0[0] + dir[0] * hit.t, p0[1] + dir[1] * hit.t, p0[2] + dir[2] * hit.t];
+    return hit;
+}
+
 function firstHit(battle, s, p0, p1, L) {
     let best = null;
     // земля

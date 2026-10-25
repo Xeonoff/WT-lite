@@ -213,7 +213,7 @@ export class HUD {
             g.lineWidth = 2;
             g.beginPath(); g.arc(q.x * k, q.z * k, q.r * k + 2, 0, 6.283); g.stroke();
             g.fillStyle = col;
-            g.font = "700 11px 'Russo One', sans-serif";
+            g.font = "800 11px 'Exo 2', sans-serif";
             g.textAlign = "center";
             g.fillText(q.id, q.x * k, q.z * k + 4);
         }
@@ -371,6 +371,21 @@ export class HUD {
         while (this.logEl.children.length > 5) this.logEl.lastChild.remove();
         setTimeout(() => f.classList.add("fade"), life);
         setTimeout(() => f.remove(), life + 600);
+    }
+
+    /** Строка чата онлайн-боя (текст вставляется как текст, не как HTML) */
+    chat(from, text, ally) {
+        const box = $("chatLines");
+        const d = document.createElement("div");
+        d.className = "chl";
+        const b = document.createElement("b");
+        b.className = ally ? "a" : "e";
+        b.textContent = from + ": ";
+        d.append(b, document.createTextNode(text));
+        box.append(d);
+        while (box.children.length > 7) box.firstChild.remove();
+        setTimeout(() => d.classList.add("fade"), 14000);
+        setTimeout(() => d.remove(), 14800);
     }
 
     banner(title, sub, cls = "") {

@@ -34,9 +34,11 @@ export class DominationMode {
         const C = Config.DOMINATION;
         const b = this.b;
         const roles = ["medium", "heavy", "light", "td", "medium", "medium"];
+        const size = b.opts.teamSize || C.TEAM_SIZE;
         for (let team = 0; team < 2; team++) {
-            const n = team === b.playerTeam ? C.TEAM_SIZE - 1 : C.TEAM_SIZE;
-            const nation = team === b.playerTeam ? b.nation : b.enemyNation;
+            // живые игроки занимают места ботов
+            const n = Math.max(0, size - b.pilots.filter((P) => P.team === team).length);
+            const nation = b.teamNation[team];
             for (let i = 0; i < n; i++) {
                 const bot = { team, nation, lives: C.BOT_LIVES, v: null, respawnT: rnd(0, 1.5), skill: rnd(0.45, 0.8), role: roles[i % roles.length] };
                 this.bots.push(bot);
@@ -53,8 +55,8 @@ export class DominationMode {
         bot.lives--;
     }
 
-    playerSpawnPoint() {
-        return this.b.spawnPoint(this.b.playerTeam);
+    playerSpawnPoint(P) {
+        return this.b.spawnPoint(P ? P.team : this.b.playerTeam);
     }
 
     update(dt) {
@@ -81,7 +83,7 @@ export class DominationMode {
                     const capturers = b.vehicles.filter((v) => !v.dead && v.team === p.owner && Math.hypot(v.x - p.x, v.z - p.z) < p.r);
                     for (const v of capturers) {
                         v.stats.caps++;
-                        if (v === b.player) { b.stats.caps++; b.award("CAPTURE"); }
+                        if (v.pilot) { v.pilot.stats.caps++; b.award("CAPTURE", 1, v.pilot); }
                     }
                 }
             }
@@ -98,7 +100,7 @@ export class DominationMode {
                 const ammo = v.resupply(0.15);
                 if (v.ext < 2) v.ext++;
                 if (v.medkits < 1) v.medkits = 1;
-                if ((restored || ammo) && v === b.player) Events.emit("resupply", { v, crew: restored, ammo });
+                if ((restored || ammo) && v.pilot) Events.emit("resupply", { v, crew: restored, ammo });
             }
         }
         // очки
@@ -114,7 +116,6 @@ export class DominationMode {
             if (bot.respawnT <= 0) { this.spawnBot(bot); bot.respawnT = 9; }
         }
         // конец боя
-        const pt = b.playerTeam;
         if (this.tickets[0] <= 0 || this.tickets[1] <= 0) {
             this.tickets = this.tickets.map((t) => Math.max(0, t));
             b.end(this.tickets[0] <= 0 ? 1 : 0, "очки команды исчерпаны");
@@ -123,7 +124,7 @@ export class DominationMode {
         for (let team = 0; team < 2; team++) {
             const alive = b.vehicles.some((v) => !v.dead && v.team === team);
             const botsLeft = this.bots.some((bt) => bt.team === team && bt.lives > 0);
-            const playerLeft = team === pt && (b.player && !b.player.dead || b.hasSpawnsLeft());
+            const playerLeft = b.pilots.some((P) => P.team === team && !P.left && (P.vehicle && !P.vehicle.dead || b.hasSpawnsLeft(P)));
             if (!alive && !botsLeft && !playerLeft) { b.end(1 - team, "вся техника команды уничтожена"); return; }
         }
         if (this.timeLeft <= 0) b.end(this.tickets[0] >= this.tickets[1] ? 0 : 1, "время боя истекло");

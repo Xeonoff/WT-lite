@@ -6,7 +6,6 @@ const DEFAULTS = {
     master: 0.8,
     sfx: 0.9,
     engine: 0.7,
-    voice: true,
     quality: "high",        // low | medium | high
     xray: true,             // рентген своих попаданий
     xrayIncoming: true,     // рентген попаданий по себе

@@ -9,12 +9,15 @@ import { CREW_SEATS } from "./data/Vehicles.js";
 import { getVehicle, vehiclesOf } from "./data/VehicleBuild.js";
 import { Battle } from "./sim/Battle.js";
 import { raycastVehicle, traceShot, muzzleWorld } from "./sim/Armor.js";
+import { probeShot } from "./sim/Projectiles.js";
 import { Scene3D } from "./render/Scene.js";
 import { Overlay } from "./render/Overlay.js";
 import { Hangar } from "./render/Hangar.js";
 import { AudioSys } from "./audio/Audio.js";
 import { HUD } from "./ui/HUD.js";
 import { Screens } from "./ui/Screens.js";
+import { NetClient } from "./net/NetClient.js";
+import { NetBattle } from "./net/NetBattle.js";
 
 const CAUSE = { ammo: "детонация боеукладки", crew: "экипаж выведен из строя", fire: "сгорел" };
 const KIND_HIT = {
@@ -22,11 +25,6 @@ const KIND_HIT = {
     nopen: ["НЕПРОБИТИЕ", "#9fb0be"], rico: ["РИКОШЕТ", "#ffd23f"], barrel: ["ПОПАДАНИЕ В СТВОЛ", "#ffb347"],
     stopped: ["ГУСЕНИЦА", "#9fb0be"],
 };
-const VOICE_KO = {
-    driver: "Механик-водитель выбыл!", gunner: "Наводчик выбыл!", loader: "Заряжающий выбыл!",
-    loader2: "Второй заряжающий выбыл!", commander: "Командир выбыл!", radio: "Радист выбыл!",
-};
-const VOICE_SEAT = { driver: "водителя", gunner: "наводчика", loader: "заряжающего", commander: "командира" };
 
 export class Game {
     constructor() {
@@ -37,6 +35,7 @@ export class Game {
         this.audio = new AudioSys();
         this.hud = new HUD();
         this.hud.onShell = (sid) => this.selectShell(sid);
+        this.net = new NetClient();
         this.screens = new Screens(this);
         this.state = "menu";
         this.battle = null;
@@ -47,9 +46,11 @@ export class Game {
         this.deathT = 0;
         this.focus = { x: 0, z: 0 };
         this.thumbQueue = [];
+        this.bindNet();
+        this.bindChat();
         this.bindKeys();
         this.bindFeedback();
-        addEventListener("blur", () => { if (this.state === "battle" && !this.paused && !this.battle.ended) this.pause(); });
+        addEventListener("blur", () => { if (this.state === "battle" && !this.paused && !this.battle.ended && !this.battle.net) this.pause(); });
         document.addEventListener("pointerdown", () => this.audio.init(), { once: false });
         this.screens.show("menu");
         this.prewarmThumbs();
@@ -109,15 +110,26 @@ export class Game {
     spawn(id) {
         const b = this.battle;
         if (!b) return;
+        if (b.net) {
+            // выезд подтверждает сервер событием playerSpawn
+            if (!b.canSpawn(id).ok) { this.audio.ui("bad"); return; }
+            b.spawnPlayer(id);
+            return;
+        }
         if (b.mode === "range" && !b.lineup.some((l) => l.id === id)) b.lineup.push({ id, used: false });
         const v = b.spawnPlayer(id);
         if (!v) { this.audio.ui("bad"); return; }
+        this.afterSpawn(v);
+    }
+
+    afterSpawn(v) {
+        const b = this.battle;
+        const id = v.def.id;
         this.screens.closeSpawn();
         this.hud.build(b);
         this.focus = { x: v.x, z: v.z };
         this.scene3d.cam.x = v.x; this.scene3d.cam.z = v.z;
         Profile.data.lastVehicle[getVehicle(id).nation] = id;
-        this.audio.say("Экипаж готов, к бою!", 1);
         if (b.spawns === 1 && (Profile.data.stats.battles < 3 || b.mode === "range")) this.showTips(b);
     }
 
@@ -135,6 +147,7 @@ export class Game {
         if (this.state !== "battle" || this.paused) return;
         this.paused = true;
         $("pChange").classList.toggle("hidden", this.battle.mode !== "range");
+        $("pauseSub").textContent = this.battle.net ? "онлайн-бой продолжается — машина стоит" : "бой остановлен";
         $("pauseScr").classList.remove("hidden");
     }
     resume() {
@@ -148,6 +161,11 @@ export class Game {
         $("pauseScr").classList.add("hidden");
         this.paused = false;
         if (!b) return;
+        if (b.net) {
+            if (!b.ended) b.leave();
+            this.toMenu("onlineScr");
+            return;
+        }
         if (!b.ended) {
             if (b.mode === "range") { this.toMenu("menu"); return; }
             b.end(1 - b.playerTeam, "вы покинули бой");
@@ -183,7 +201,7 @@ export class Game {
         if (this.resultShown) return;
         this.resultShown = true;
         let next = null;
-        if (b.mode !== "range") {
+        if (b.mode !== "range" && r.stats) {
             Profile.addRP(b.nation, r.stats.rp);
             Profile.addVehicleStats(b.vstats);
             Profile.recordBattle({ win: r.win, kills: r.stats.kills, deaths: r.stats.deaths, wave: r.stats.wave });
@@ -194,13 +212,91 @@ export class Game {
             }
         }
         this.screens.closeSpawn();
-        this.screens.showResults(r, { nation: b.nation, next });
+        this.screens.showResults(r, { nation: b.nation, next, online: !!b.net });
+    }
+
+    /* ─────────── Онлайн ─────────── */
+    bindNet() {
+        const net = this.net;
+        const nb = () => (this.battle && this.battle.net ? this.battle : null);
+        net.on("start", (m) => this.startOnline(m));
+        net.on("s", (m) => { const b = nb(); if (b) b.onSnapshot(m); });
+        net.on("ev", (m) => { const b = nb(); if (b) b.onEvents(m.ev); });
+        net.on("sc", (m) => { const b = nb(); if (b) b.onScores(m.v); });
+        net.on("end", (m) => { const b = nb(); if (b) b.finish(m.r); });
+        net.on("msg", (m) => { if (nb()) { this.hud.log(m.text, m.kind || "warn"); this.audio.ui("bad"); } });
+        net.on("chat", (m) => { if (nb()) this.hud.chat(m.from, m.text, m.team === this.battle.playerTeam); });
+        net.on("close", () => {
+            if (nb()) { this.toMenu("onlineScr"); this.showError(new Error("соединение с сервером потеряно")); }
+        });
+    }
+
+    startOnline(m) {
+        this.audio.init();
+        this.screens.hideAll();
+        try {
+            this.endBattleCleanup();
+            const b = new NetBattle(m, this.net);
+            this.battle = b;
+            this.scene3d.loadBattle(b);
+            this.hud.battle = b;
+            this.hud.mmStatic = null;
+            this.state = "battle";
+            this.paused = false;
+            this.deathT = 0;
+            this.lastXray = null;
+            this.resultShown = false;
+            const sp = b.world.spawns[b.playerTeam];
+            this.focus = { x: sp.x, z: sp.z };
+            this.hud.show(true);
+            $("feed").innerHTML = "";
+            $("crewLog").innerHTML = "";
+            $("chatLines").innerHTML = "";
+            document.body.classList.add("inBattle");
+            if (b.player && !b.player.dead) this.afterSpawn(b.player);
+            else this.screens.openSpawn({ title: "ВЫБОР ТЕХНИКИ" });
+            this.hud.banner(b.world.map.name.toUpperCase(), "онлайн · " + b.weather.name.toLowerCase() + " · превосходство");
+            this.hud.log("Онлайн-бой: Enter — чат, Esc — меню (бой не останавливается)", "tip", 7000);
+        } catch (e) {
+            console.error(e);
+            this.showError(e);
+            this.toMenu("onlineScr");
+        }
+    }
+
+    /** Действие игрока: в онлайне — запрос серверу, в одиночной игре — сразу */
+    act(name, local) {
+        const b = this.battle;
+        if (b && b.net) { b.act(name); return true; }
+        return local();
+    }
+
+    openChat() {
+        const inp = $("chatIn");
+        inp.classList.remove("hidden");
+        inp.value = "";
+        inp.focus();
+    }
+
+    bindChat() {
+        const inp = $("chatIn");
+        const close = () => { inp.classList.add("hidden"); inp.blur(); };
+        inp.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                const text = inp.value.trim();
+                if (text) this.net.send({ t: "chat", text });
+                close();
+            } else if (e.key === "Escape") close();
+            e.stopPropagation();
+        });
+        inp.addEventListener("blur", () => inp.classList.add("hidden"));
     }
 
     /* ─────────── Управление игроком ─────────── */
     selectShell(sid) {
         const p = this.battle && this.battle.player;
         if (!p || p.dead) return;
+        if (this.battle.net) this.battle.act("shell", { id: sid });
         if (p.selectShell(sid)) {
             this.audio.ui("click");
             this.hud.update(0, true, this.aim);
@@ -235,19 +331,24 @@ export class Game {
         I.on("KeyR", () => {
             const p = player();
             if (!p) return;
-            if (p.repair) { p.cancelRepair(); this.hud.log("Ремонт отменён"); }
-            else if (!p.startRepair()) this.hud.log("Ремонт не требуется");
+            this.act("repair", () => {
+                if (p.repair) { p.cancelRepair(); this.hud.log("Ремонт отменён"); }
+                else if (!p.startRepair()) this.hud.log("Ремонт не требуется");
+            });
         });
         I.on("KeyT", () => {
             const p = player();
-            if (p && !p.useMedkit()) this.hud.log(p.medkits <= 0 ? "Аптечек нет" : "Раненых нет");
+            if (p) this.act("medkit", () => { if (!p.useMedkit()) this.hud.log(p.medkits <= 0 ? "Аптечек нет" : "Раненых нет"); });
         });
         I.on("KeyF", () => {
             const p = player();
             if (!p) return;
-            if (!p.fire) this.hud.log("Пожара нет");
-            else if (!p.useExtinguisher()) this.hud.log("Огнетушителей не осталось", "bad");
+            this.act("ext", () => {
+                if (!p.fire) this.hud.log("Пожара нет");
+                else if (!p.useExtinguisher()) this.hud.log("Огнетушителей не осталось", "bad");
+            });
         });
+        I.on("Enter", () => { if (this.state === "battle" && this.battle && this.battle.net && !this.screens.modalOpen) this.openChat(); });
         I.on("KeyB", () => {
             const p = player();
             if (!p) return;
@@ -308,7 +409,7 @@ export class Game {
     computeAim(dt) {
         const b = this.battle, p = b && b.player;
         const aim = this.aim;
-        if (!p || p.dead) { aim.point = null; aim.pen = null; return; }
+        if (!p || p.dead) { aim.point = null; aim.pen = null; aim.block = null; return; }
         const m = this.input.mouse;
         const ray = this.scene3d.screenRay(m.x, m.y);
         let best = null;
@@ -350,24 +451,63 @@ export class Game {
                 aim.cursor = gp;
             }
         }
-        // индикатор пробития (10 раз в секунду)
+        // индикатор пробития и препятствий на линии огня (10 раз в секунду)
         aim.penT -= dt;
         if (aim.penT <= 0) {
             aim.penT = 0.1;
             aim.pen = null;
+            aim.block = this.probeBlock(p, mz);
             const t = aim.target;
             if (t && !t.dead && t.team !== p.team && aim.point) {
                 const s = SHELLS[p.shell];
                 const dx = aim.point[0] - mz[0], dy = aim.point[1] - mz[1], dz = aim.point[2] - mz[2];
                 const L = Math.hypot(dx, dy, dz) || 1;
-                const tr = traceShot(s, t, mz, [dx / L, dy / L, dz / L], L + 10, L);
+                // сначала — по фактической линии ствола: так полетит снаряд, если выстрелить сейчас;
+                // пока орудие не довернулось на цель — оценка точки под курсором
+                p.aimPoint = aim.point;
+                let tr = traceShot(s, t, mz, b.fireLine(p).dir, L + 10, L);
+                let aligned = true;
+                if (!tr.main && !tr.layers.length) {
+                    tr = traceShot(s, t, mz, [dx / L, dy / L, dz / L], L + 10, L);
+                    aligned = false;
+                }
                 if (tr.main) {
                     const ev = tr.main.ev;
-                    if (s.type === "HE") aim.pen = { he: true, ok: tr.pen >= ev.eff, eff: ev.eff, pen: tr.pen, plate: ev.info.name, angle: ev.theta };
-                    else aim.pen = { pen: tr.pen, eff: ev.eff, rico: ev.ricoP, plate: ev.info.name, angle: ev.theta };
-                } else if (tr.layers.length) aim.pen = { pen: tr.pen, eff: 999, rico: 0, plate: tr.layers[0].ev.info.name, blocked: false };
+                    if (s.type === "HE") aim.pen = { he: true, ok: tr.pen >= ev.eff, eff: ev.eff, pen: tr.pen, plate: ev.info.name, angle: ev.theta, aligned };
+                    else aim.pen = { pen: tr.pen, eff: ev.eff, rico: ev.ricoP, plate: ev.info.name, angle: ev.theta, aligned };
+                } else if (tr.layers.length) aim.pen = { pen: tr.pen, eff: 999, rico: 0, plate: tr.layers[0].ev.info.name, blocked: false, aligned };
             }
+            if (aim.block && aim.pen) aim.pen.blocked = true;
         }
+    }
+
+    /**
+     * Препятствие между дульным срезом и точкой прицеливания: выстрел пускается
+     * тем же направлением, что и в Battle.fire (с ограничением угла места).
+     */
+    probeBlock(p, mz) {
+        const aim = this.aim;
+        const goal = aim.target ? aim.cursor : aim.cursor || aim.point;
+        if (!aim.point || !goal) return null;
+        const dx = aim.point[0] - mz[0], dz = aim.point[2] - mz[2];
+        const hd = Math.hypot(dx, dz);
+        if (hd < 6) return null;
+        const pitch = clamp(Math.atan2(aim.point[1] - mz[1], Math.max(12, hd)), -0.12, 0.2);
+        const dir = [Math.cos(pitch) * dx / hd, Math.sin(pitch), Math.cos(pitch) * dz / hd];
+        const want = Math.hypot(goal[0] - mz[0], goal[2] - mz[2]) / Math.cos(pitch);
+        const hit = probeShot(this.battle, p, mz, dir, want + 3);
+        if (!hit || hit.t > want - 1.5) return null;
+        let what;
+        if (hit.kind === "vehicle") {
+            if (hit.v === aim.target || hit.v.team !== p.team) return null;
+            what = "союзник";
+        } else if (hit.kind === "ground") {
+            // по земле у цели — не препятствие: выстрел просто уходит в грунт за ней
+            if (!aim.target || hit.t > want * 0.9) return null;
+            what = "грунт";
+        } else if (hit.kind === "wreck" && hit.o.v === aim.target) return null;
+        else what = { building: "здание", wreck: "подбитая машина", rock: "скала" }[hit.kind] || "препятствие";
+        return { point: hit.point, what, dist: hit.t };
     }
 
     /* ─────────── События → обратная связь ─────────── */
@@ -385,10 +525,6 @@ export class Game {
                 const [txt, col] = KIND_HIT[k] || [null];
                 const crit = r.dmg.filter((d) => d.kind === "crew" && d.after <= 0).length;
                 if (txt) this.overlay.hitText(r.killed ? "УНИЧТОЖЕН" : txt, r.killed ? "#ffd25a" : col, crit ? "выведено членов экипажа: " + crit : r.events.includes("fire") ? "пожар!" : "");
-                if (k === "pen" || k === "he-pen") this.audio.say(r.killed ? "Цель уничтожена!" : "Пробитие!", 2);
-                else if (k === "nopen") this.audio.say("Не пробил!", 1);
-                else if (k === "rico") this.audio.say("Рикошет!", 1);
-                if (r.events.includes("mod:track") && !r.killed) this.audio.say("Гусеница противника сбита!", 2);
                 if (Settings.get("xray") && k !== "miss") {
                     this.hud.showXray(r, e.target);
                     this.lastXray = { res: r, target: e.target, incoming: false };
@@ -397,9 +533,7 @@ export class Game {
             } else if (isP(e.target)) {
                 if (e.shooter) this.overlay.incomingHit(e.shooter.x, e.shooter.z, k === "he-pen" ? "pen" : k);
                 this.audio.playerHit(k, cal);
-                if (k === "pen" || k === "he-pen") { this.vignette(1); this.audio.say("Нас пробили!", 2); }
-                else if (k === "rico") this.audio.say("Отскок!", 0);
-                else if (k === "nopen") this.audio.say("Броня выдержала!", 0);
+                if (k === "pen" || k === "he-pen") this.vignette(1);
                 if (Settings.get("xrayIncoming") && (k === "pen" || k === "he-pen" || k === "he")) {
                     this.hud.showXray(r, e.target, null, true);
                     this.lastXray = { res: r, target: e.target, incoming: true };
@@ -418,7 +552,6 @@ export class Game {
             const b = B();
             if (!b) return;
             const v = e.v, killer = e.killer;
-            if (v.static && b.mode === "range") { this.audio.say("Мишень поражена!", 1); }
             const vName = (v.isPlayer ? "Вы" : v.callsign) + ` <i>${v.def.name}</i>`;
             const kName = killer ? (killer.isPlayer ? "Вы" : killer.callsign) + ` <i>${killer.def.name}</i>` : "";
             const vc = v.team === b.playerTeam ? "a" : "e";
@@ -427,7 +560,7 @@ export class Game {
             this.hud.feed(killer && killer !== v ? `<span class="${kc}">${kName}</span> ${cause} <span class="${vc}">${vName}</span>` : `<span class="${vc}">${vName}</span> ${cause}`, isP(killer) ? "mine" : isP(v) ? "me" : "");
             if (e.cause === "ammo") this.audio.detonation(v.x, v.z);
             else this.audio.explosion(v.x, v.z, 1.1);
-            if (isP(killer) && v.team !== b.playerTeam) { this.audio.ui("good"); this.audio.say("Цель уничтожена!", 3); }
+            if (isP(killer) && v.team !== b.playerTeam) this.audio.ui("good");
             if (isP(v)) {
                 this.deathT = b.time;
                 this.deathCause = CAUSE[e.cause] || e.cause;
@@ -438,29 +571,25 @@ export class Game {
             }
         });
         Events.on("crewKO", (e) => {
-            if (isP(e.v)) {
-                this.hud.log(e.v.def.crewTitles[e.seat] + " выбыл", "bad");
-                this.audio.say(VOICE_KO[e.seat] || "Потери в экипаже!", 3);
-            }
+            if (isP(e.v)) this.hud.log(e.v.def.crewTitles[e.seat] + " выбыл", "bad");
         });
         Events.on("crewSwap", (e) => {
             if (!isP(e.v)) return;
             this.hud.log(`${CREW_SEATS[e.member.home].name} пересаживается: ${CREW_SEATS[e.to].name.toLowerCase()} (${e.dur.toFixed(1)} с)`, "swap");
-            this.audio.say("Занимаю место " + (VOICE_SEAT[e.to] || "в экипаже") + "!", 2);
         });
         Events.on("crewSwapDone", (e) => { if (isP(e.v)) this.hud.log(`${CREW_SEATS[e.member.home].name} на месте: ${CREW_SEATS[e.to].name.toLowerCase()}`, "good"); });
         Events.on("modDestroyed", (e) => {
             if (!isP(e.v)) return;
             const t = e.type;
             const msg = { track: "Гусеница сбита!", engine: "Двигатель выведен!", transmission: "Трансмиссия выведена!", barrel: "Ствол уничтожен!", breech: "Казённик выведен!", ammo: "Боеукладка разбита!", drive: "Поворотный механизм выведен!", fuel: "Бак пробит!" }[t];
-            if (msg) { this.hud.log(msg, "bad"); this.audio.say(msg, t === "track" || t === "engine" ? 3 : 2); }
+            if (msg) this.hud.log(msg, "bad");
             if (t === "track") this.audio.trackBreak();
         });
         Events.on("fireStart", (e) => {
             const b = B();
             if (!b) return;
-            if (isP(e.v)) { this.hud.log("ПОЖАР! Жми [F]", "fire"); this.audio.say("Пожар! Горим!", 4); }
-            else if (isP(e.by)) { this.hud.feed(`<span class="e">${e.v.callsign} <i>${e.v.def.name}</i></span> горит`, "mine"); this.audio.say("Противник горит!", 1); }
+            if (isP(e.v)) this.hud.log("ПОЖАР! Жми [F]", "fire");
+            else if (isP(e.by)) this.hud.feed(`<span class="e">${e.v.callsign} <i>${e.v.def.name}</i></span> горит`, "mine");
         });
         Events.on("fireOut", (e) => {
             if (!isP(e.v)) return;
@@ -468,7 +597,7 @@ export class Game {
             if (e.ext) this.audio.extinguisher();
         });
         Events.on("repairStart", (e) => { if (isP(e.v)) { this.hud.log(`Ремонт: ${e.dur.toFixed(0)} с. Машина неподвижна`, "warn"); this.audio.repairTick(); } });
-        Events.on("repairDone", (e) => { if (isP(e.v)) { this.hud.log("Ремонт завершён", "good"); this.audio.say("Ремонт закончен!", 2); } });
+        Events.on("repairDone", (e) => { if (isP(e.v)) this.hud.log("Ремонт завершён", "good"); });
         Events.on("medkit", (e) => { if (isP(e.v)) this.hud.log("Аптечка: вылечено " + e.healed, "good"); });
         Events.on("reloaded", (e) => { if (isP(e.v)) this.audio.reloadDone(); });
         Events.on("resupply", (e) => {
@@ -493,16 +622,16 @@ export class Game {
         Events.on("artyCalled", (e) => {
             const b = B();
             if (!b) return;
-            if (isP(e.v)) { this.hud.log("Артиллерия: огонь по квадрату!", "good"); this.audio.say("Артиллерия, огонь!", 2); this.audio.radio(); }
+            if (isP(e.v)) { this.hud.log("Артиллерия: огонь по квадрату!", "good"); this.audio.radio(); }
             else if (e.v.team !== b.playerTeam) {
                 const p = b.player;
-                if (p && !p.dead && Math.hypot(p.x - e.strike.x, p.z - e.strike.z) < e.strike.r + 18) { this.hud.log("АРТОБСТРЕЛ! Уходите из зоны", "bad"); this.audio.say("Артобстрел! Уходим!", 4); }
+                if (p && !p.dead && Math.hypot(p.x - e.strike.x, p.z - e.strike.z) < e.strike.r + 18) this.hud.log("АРТОБСТРЕЛ! Уходите из зоны", "bad");
             }
         });
         Events.on("artyShell", (e) => { if (B()) this.audio.whistle(e.x, e.z); });
-        Events.on("waveStart", (e) => { this.hud.banner("ВОЛНА " + e.n, "противников: " + e.count); this.audio.say("Противник на подходе!", 2); });
+        Events.on("waveStart", (e) => this.hud.banner("ВОЛНА " + e.n, "противников: " + e.count));
         Events.on("waveClear", (e) => { this.hud.banner("ВОЛНА " + e.n + " ОТБИТА", "полевой ремонт и пополнение"); this.audio.ui("good"); });
-        Events.on("playerSpawn", () => { });
+        Events.on("playerSpawn", (e) => { const b = B(); if (b && b.net && e.v === b.player) this.afterSpawn(e.v); });
         Events.on("battleEnd", (r) => {
             this.hud.banner(r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ", r.reason, r.win ? "win" : "lose");
             this.audio.ui(r.win ? "good" : "bad");
@@ -538,17 +667,27 @@ export class Game {
             const id = this.thumbQueue.shift();
             this.hangar.thumbnail(id);
         }
-        const offset = this.screens.current === "hangarScr" ? 0.045 : this.screens.current === "menu" ? 0.2 : 0;
+        let offset = this.screens.current === "menu" ? 0.2 : 0;
+        if (this.screens.current === "hangarScr") {
+            // машина — по центру окна осмотра между деревом и карточкой
+            const r = document.getElementById("hView").getBoundingClientRect();
+            offset = r.width > 0 ? (r.left + r.width / 2 - innerWidth / 2) / innerWidth : 0.045;
+        }
         this.hangar.render(dt, offset);
     }
 
     frameBattle(dt) {
         const b = this.battle;
         const running = !this.paused && !this.screens.modalOpen;
-        const sdt = running ? dt : 0;
+        // онлайн-бой не ставится на паузу: реплика обновляется всегда
+        const sdt = running || b.net ? dt : 0;
         if (running) {
             this.computeAim(dt);
             this.updatePlayer(dt);
+            b.update(dt);
+        } else if (b.net) {
+            const p = b.player;
+            if (p) { p.input.throttle = 0; p.input.steer = 0; }
             b.update(dt);
         }
         const p = b.player;

@@ -70,7 +70,7 @@ export class Brain {
             const los = b.world.los(v.x, v.z, e.x, e.z);
             let s = d / 100 + (los ? 0 : 2.5);
             if (e === this.target) s -= 0.7;
-            if (e.isPlayer) s -= 0.25;
+            if (e.pilot) s -= 0.25;
             if (e.def.role === "td" || e.def.role === "heavy") s -= 0.15;
             if (s < bestS) { bestS = s; best = e; }
         }

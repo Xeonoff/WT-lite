@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { buildVehicleMesh, disposeVehicleMesh } from "./VehicleMesh.js";
+import { buildArmorModel } from "./ArmorView.js";
 import { getVehicle } from "../data/VehicleBuild.js";
-import { mkCanvas } from "../core/Utils.js";
+import { mkCanvas, clamp, DEG } from "../core/Utils.js";
+import { raycastVehicle, plateInfo, tiltedNormal } from "../sim/Armor.js";
 
 export class Hangar {
     constructor(scene3d) {
@@ -40,31 +42,134 @@ export class Hangar {
         this.angle = -0.7;
         this.thumbs = new Map();
         this.offsetX = 0;
+        // ручной осмотр: вращение мышью, наклон, масштаб; автоповорот после паузы
+        this.pitch = 0.48;
+        this.zoom = 0.85;
+        this.idle = 99;
+        this.drag = null;
+        this.mode = "model";        // model | armor | modules
+        this.armor = null;
+        this.pointer = null;
+        this.raycaster = new THREE.Raycaster();
+    }
+
+    /** Подключить элемент-«окно» осмотра: перетаскивание, колесо, наведение */
+    attach(el, onHover) {
+        this.view = el;
+        this.onHover = onHover;
+        el.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0 || e.target.closest("button")) return;
+            this.drag = { x: e.clientX, y: e.clientY, a: this.angle, p: this.pitch, moved: false };
+            el.setPointerCapture(e.pointerId);
+            el.classList.add("grab");
+        });
+        el.addEventListener("pointermove", (e) => {
+            this.pointer = { x: e.clientX, y: e.clientY };
+            const d = this.drag;
+            if (!d) return;
+            const dx = e.clientX - d.x, dy = e.clientY - d.y;
+            if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
+            this.angle = d.a + dx * 0.009;
+            this.pitch = clamp(d.p + dy * 0.005, 0.08, 1.35);
+            this.idle = 0;
+        });
+        const end = (e) => {
+            if (!this.drag) return;
+            this.drag = null;
+            el.classList.remove("grab");
+            if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+        };
+        el.addEventListener("pointerup", end);
+        el.addEventListener("pointercancel", end);
+        el.addEventListener("pointerleave", () => { this.pointer = null; });
+        el.addEventListener("wheel", (e) => {
+            e.preventDefault();
+            this.zoom = clamp(this.zoom * Math.exp(e.deltaY * 0.0011), 0.5, 1.7);
+            this.idle = 0;
+        }, { passive: false });
+        el.addEventListener("dblclick", () => this.resetView());
+    }
+
+    resetView() { this.pitch = 0.48; this.zoom = 0.85; this.idle = 99; }
+
+    setMode(mode) {
+        this.mode = mode;
+        this.applyMode();
+    }
+
+    applyMode() {
+        if (!this.vm) return;
+        const show = this.mode !== "model";
+        if (show && !this.armor) {
+            this.armor = buildArmorModel(this.def);
+            this.vm.root.add(this.armor.root);
+        }
+        if (this.armor) {
+            this.armor.root.visible = show;
+            if (show) this.armor.setMode(this.mode);
+        }
+        for (const m of this.vm.meshes) m.visible = !show;
+        if (!show && this.onHover) this.onHover(null);
     }
 
     show(defId, biome = "summer") {
         if (!defId || this.defId === defId + biome) return;
         this.defId = defId + biome;
         if (this.vm) { this.stand.remove(this.vm.root); disposeVehicleMesh(this.vm); }
+        if (this.armor) { this.armor.dispose(); this.armor = null; }
         const def = getVehicle(defId);
         this.vm = buildVehicleMesh(def, biome);
         this.vm.root.position.x = -(Math.max(def.dims.L / 2, def.turret.x + def.turret.hl + def.gun.len) - def.dims.L / 2) * 0.35;
         this.stand.add(this.vm.root);
         this.def = def;
+        this.applyMode();
+    }
+
+    /** Лист брони под курсором: деталь попадания, толщина, угол к линии взгляда */
+    pick() {
+        if (!this.pointer || !this.vm || this.mode === "model" || this.drag) return null;
+        const w = innerWidth, h = innerHeight;
+        const nx = (this.pointer.x / w) * 2 - 1, ny = -(this.pointer.y / h) * 2 + 1;
+        this.camera.setViewOffset(w, h, -this.lastOffset * w, 0, w, h);
+        this.raycaster.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
+        this.camera.clearViewOffset();
+        const ro = this.raycaster.ray.origin, rd = this.raycaster.ray.direction;
+        const root = this.vm.root;
+        root.updateWorldMatrix(true, false);
+        const p = new THREE.Vector3().setFromMatrixPosition(root.matrixWorld);
+        const v = { def: this.def, x: p.x, z: p.z, a: -this.angle, turretRel: () => 0, gunRel: () => 0 };
+        const hit = raycastVehicle(v, [ro.x, ro.y - p.y, ro.z], [rd.x, rd.y, rd.z], 400);
+        if (!hit) return null;
+        const info = plateInfo(v, hit);
+        const n = tiltedNormal(hit.normal, info.vslope);
+        const d = hit.dir;
+        const cosT = clamp(-(d[0] * n[0] + d[1] * n[1] + d[2] * n[2]), 0, 1);
+        const theta = Math.acos(cosT) / DEG;
+        const eff = info.thick / Math.max(0.1, cosT);
+        return { hit, info, theta, eff };
     }
 
     /** offset — сдвиг машины влево/вправо на экране, чтобы не мешали панели */
     render(dt, offset = 0) {
         const r = this.s3.renderer;
-        this.angle += dt * 0.22;
+        this.idle += dt;
+        // автоповорот только в обычном виде и после 5 с без касаний
+        if (this.idle > 5 && this.mode === "model") this.angle += dt * 0.22 * clamp((this.idle - 5) / 2, 0, 1);
         this.stand.rotation.y = this.angle;
         const w = innerWidth, h = innerHeight;
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
         const size = this.def ? Math.max(this.def.dims.L + this.def.gun.len * 0.5, 6) : 7;
-        const dist = size * 2.3 + 5;
-        this.camera.position.set(dist * 0.55, dist * 0.5, dist * 0.8);
+        const dist = (size * 2.3 + 5) * this.zoom;
+        const az = 0.97;
+        this.camera.position.set(Math.cos(this.pitch) * Math.cos(az) * dist, Math.sin(this.pitch) * dist + 1.1, Math.cos(this.pitch) * Math.sin(az) * dist);
         this.camera.lookAt(0, 1.1, 0);
+        this.lastOffset = offset;
+        if (this.onHover && this.mode !== "model") {
+            const pk = this.pick();
+            if (this.armor) this.armor.highlight(pk && pk.hit);
+            this.onHover(pk, this.pointer);
+        }
         this.camera.setViewOffset(w, h, -offset * w, 0, w, h);
         r.setRenderTarget(null);
         r.render(this.scene, this.camera);

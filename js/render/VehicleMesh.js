@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { camoTexture, trackTexture, runningGearTexture } from "./Textures.js";
-import { turretSlopeRing } from "../data/VehicleBuild.js";
+import { turretSlopeRing, hullHalfWidth, skirtSpan } from "../data/VehicleBuild.js";
 
 const geoCache = new Map();
 const matCache = new Map();
@@ -31,15 +31,52 @@ function camoMat(paint, biome) {
     return m;
 }
 
+/** Профиль корпуса сбоку одним многоугольником (против часовой стрелки) */
+function profilePoly(def) {
+    return [...def.profile.front.slice().reverse(), ...def.profile.rear];
+}
+
+/** Отсечь многоугольник профиля ниже y0 */
+function clipAbove(poly, y0) {
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const ina = a[1] >= y0, inb = b[1] >= y0;
+        if (ina) out.push(a);
+        if (ina !== inb) {
+            const t = (y0 - a[1]) / (b[1] - a[1]);
+            out.push([a[0] + (b[0] - a[0]) * t, y0]);
+        }
+    }
+    return out;
+}
+
+/** Выдавливание профиля на ширину, зависящую от высоты (наклонные борта ниш) */
+function extrudeProfile(pts, bevel, halfWidthAt) {
+    const shape = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
+    const g = new THREE.ExtrudeGeometry(shape, { depth: 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 1, steps: 1 });
+    g.translate(0, 0, -1);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+        const z = p.getZ(i), az = Math.abs(z), sg = Math.sign(z) || 1;
+        const hw = halfWidthAt(p.getY(i));
+        p.setZ(i, az >= 1 ? sg * (hw + az - 1) : z * hw);
+    }
+    g.computeVertexNormals();
+    return g;
+}
+
 function hullGeometry(def) {
     const key = def.id + ":hull";
     if (geoCache.has(key)) return geoCache.get(key);
-    const { W, tw } = def.dims;
-    const iw = W - 2 * tw + 0.12;
-    const shape = new THREE.Shape(def.profile.pts.map(([x, y]) => new THREE.Vector2(x, y)));
-    const g = new THREE.ExtrudeGeometry(shape, { depth: iw, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 1, steps: 1 });
-    g.translate(0, 0, -iw / 2);
-    g.computeVertexNormals();
+    const F = def.form;
+    const poly = profilePoly(def);
+    // нижняя часть — между гусеницами; надгусеничные ниши — отдельным, более широким телом
+    let g = extrudeProfile(poly, 0.05, () => F.iw / 2 + 0.01);
+    if (F.has) {
+        const up = extrudeProfile(clipAbove(poly, F.yf), 0.035, (y) => hullHalfWidth(def, Math.max(F.yf, y)) - 0.035);
+        g = mergeGeometries([g, up]);
+    }
     g.userData.shared = true;
     geoCache.set(key, g);
     return g;
@@ -206,18 +243,25 @@ export function buildVehicleMesh(def, biomeKey) {
         m.position.set(0, 0, (s === 0 ? -1 : 1) * (W / 2 - tw / 2));
         tracks.push({ mesh: m, tex: belt, mats: [beltMat, sideMat] });
     }
-    // надгусеничные полки по всей длине с отогнутыми передним и задним щитками
+    // надгусеничные полки по всей длине с отогнутыми передним и задним щитками;
+    // если полка выступает из-под корпуса — с отбортовкой по внешнему краю
     const flen = Lt * 0.93;
-    const fGeo = new THREE.BoxGeometry(flen, 0.05, tw + 0.1);
-    const flapGeo = new THREE.BoxGeometry(0.42, 0.05, tw + 0.1);
+    const fGeo = new THREE.BoxGeometry(flen, 0.06, tw + 0.1);
+    const flapGeo = new THREE.BoxGeometry(0.42, 0.06, tw + 0.1);
+    const openShelf = W / 2 - (def.form.has ? def.form.sw : def.form.iw / 2) > 0.15;
+    const lipGeo = openShelf ? new THREE.BoxGeometry(flen, 0.09, 0.035) : null;
     for (const s of [-1, 1]) {
         const z = s * (W / 2 - tw / 2);
         const f = add(root, new THREE.Mesh(fGeo, camo));
-        f.position.set(0, th + 0.035, z);
+        f.position.set(0, th + 0.03, z);
         for (const fx of [1, -1]) {
             const fl = add(root, new THREE.Mesh(flapGeo, camo));
             fl.rotation.z = -fx * 0.5;
-            fl.position.set(fx * (flen / 2 + 0.185), th + 0.035 - 0.1, z);
+            fl.position.set(fx * (flen / 2 + 0.185), th + 0.03 - 0.1, z);
+        }
+        if (lipGeo) {
+            const lip = add(root, new THREE.Mesh(lipGeo, camo));
+            lip.position.set(0, th + 0.045, s * (W / 2 + 0.035));
         }
     }
 
@@ -235,25 +279,34 @@ export function buildVehicleMesh(def, biomeKey) {
     const hatch = add(root, new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.08, 0.5), STEEL));
     const frontTopX = L / 2 - def.profile.ft;
     hatch.position.set(Math.min(frontTopX + 0.1, L * 0.33), H - 0.02, -(W - 2 * tw) * 0.22);
-    // ящики ЗИП на полках
+    // ящики ЗИП: на открытой части полки, а если её закрывают ниши — на крыше у борта
+    const F = def.form;
+    const shelf = W / 2 - (F.has ? F.sw : F.iw / 2) - 0.04;
     for (const [s, fx] of [[-1, 0.06], [1, -0.14]]) {
-        const bx = add(root, new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.2, tw * 0.72), DARK));
-        bx.position.set(L * fx, th + 0.16, s * (W / 2 - tw / 2));
+        if (shelf >= 0.2) {
+            const bx = add(root, new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.2, shelf * 0.9), DARK));
+            bx.position.set(L * fx, th + 0.16, s * (W / 2 - shelf * 0.5 - 0.02));
+        } else {
+            const bx = add(root, new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.14, 0.3), DARK));
+            bx.position.set(-L * 0.12 + L * fx, H + 0.07, s * (hullHalfWidth(def, H) - 0.22));
+        }
     }
-    // бочки (советские) — на корме полок
+    // бочки (советские) — на корме, снаружи бортов
     if (det.drums) {
         for (const s of [-1, 1]) {
             const d = add(root, new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.7, 10), DARK));
             d.rotation.z = Math.PI / 2;
-            d.position.set(-L * 0.36, th + 0.25, s * (W / 2 - tw / 2));
+            const y = (F.has ? F.yf : th) + 0.22;
+            const z = shelf >= 0.36 ? W / 2 - shelf / 2 : Math.min(W / 2 - 0.05, hullHalfWidth(def, y) + 0.12);
+            d.position.set(-L * 0.36, y, s * z);
         }
     }
-    // противокумулятивные экраны — подвешены к полкам
+    // противокумулятивные экраны — на кронштейнах вдоль борта
     if (det.skirts) {
-        const skH = th * 0.78;
+        const { y0, y1 } = skirtSpan(def);
         for (const s of [-1, 1]) {
-            const sk = add(root, new THREE.Mesh(new THREE.BoxGeometry(flen * 0.86, skH, 0.05), camo));
-            sk.position.set(L * 0.02, th + 0.04 - skH / 2, s * (W / 2 + 0.06));
+            const sk = add(root, new THREE.Mesh(new THREE.BoxGeometry(L * 0.76, y1 - y0, 0.05), camo));
+            sk.position.set(L * 0.02, (y0 + y1) / 2, s * (W / 2 + 0.05));
         }
     }
 

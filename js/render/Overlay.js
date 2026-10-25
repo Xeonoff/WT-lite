@@ -82,7 +82,7 @@ export class Overlay {
         const a = clamp(1.2 - d / 400, 0.45, 1);
         g.globalAlpha = a;
         g.textAlign = "center";
-        g.font = "600 11px Rubik, sans-serif";
+        g.font = "600 11px Inter, sans-serif";
         const label = (ally ? v.callsign + " · " : "") + v.def.name;
         g.fillStyle = "rgba(10,12,8,.55)";
         const tw = g.measureText(label).width;
@@ -124,7 +124,7 @@ export class Overlay {
         if (!busy) this.edgeSlots.push([lx, ly]);
         if (label && !busy) {
             g.fillStyle = col;
-            g.font = "600 10px Rubik, sans-serif";
+            g.font = "600 10px Inter, sans-serif";
             g.textAlign = "center";
             g.fillText(label, ex - Math.cos(a) * 22, ey - Math.sin(a) * 22 + 4);
         }
@@ -162,7 +162,7 @@ export class Overlay {
                 g.stroke();
             }
             g.fillStyle = col;
-            g.font = `400 ${on ? 17 : 13}px "Russo One", sans-serif`;
+            g.font = `800 ${on ? 17 : 13}px "Exo 2", sans-serif`;
             g.textAlign = "center";
             g.fillText(q.id, px, py - (on ? 34 : 0) + (on ? 6 : 5));
             g.globalAlpha = 1;
@@ -191,7 +191,7 @@ export class Overlay {
             const [cx, cy, front] = sc.project(s.x, 0, s.z);
             if (!front) continue;
             const left = Math.max(0, Config.ARTY.DELAY - s.t);
-            g.font = "400 12px 'Russo One', sans-serif";
+            g.font = "800 12px 'Exo 2', sans-serif";
             g.textAlign = "center";
             g.fillStyle = `rgba(${col},1)`;
             g.fillText(left > 0 ? "АРТУДАР · " + left.toFixed(1) + " с" : "ОГОНЬ!", cx, cy + 4);
@@ -257,7 +257,7 @@ export class Overlay {
             g.fillRect(x - 40, y - 4, 80, 7);
             g.fillStyle = bar.col;
             g.fillRect(x - 39, y - 3, 78 * clamp(bar.t, 0, 1), 5);
-            g.font = "600 10px Rubik, sans-serif";
+            g.font = "600 10px Inter, sans-serif";
             g.textAlign = "center";
             g.fillText(bar.label, x, y - 8);
         }
@@ -315,9 +315,31 @@ export class Overlay {
                 g.beginPath(); g.moveTo(gx - 9, gyy); g.lineTo(gx - 5, gyy); g.moveTo(gx + 5, gyy); g.lineTo(gx + 9, gyy); g.stroke();
             }
         }
-        g.strokeStyle = col;
+        // препятствие на линии огня: крест в точке удара и пунктир до прицела
+        const blk = aim.block;
+        if (blk) {
+            const [bx, by, bf] = sc.project(blk.point[0], blk.point[1], blk.point[2]);
+            if (bf) {
+                g.save();
+                g.strokeStyle = "rgba(255,120,70,.75)";
+                g.lineWidth = 1.4;
+                g.setLineDash([5, 5]);
+                g.beginPath(); g.moveTo(bx, by); g.lineTo(mx, my); g.stroke();
+                g.setLineDash([]);
+                g.fillStyle = "rgba(20,12,8,.55)";
+                g.beginPath(); g.arc(bx, by, 11, 0, 6.283); g.fill();
+                g.strokeStyle = "#ff7846";
+                g.lineWidth = 2.4;
+                g.beginPath(); g.arc(bx, by, 11, 0, 6.283); g.stroke();
+                g.beginPath(); g.moveTo(bx - 5.5, by - 5.5); g.lineTo(bx + 5.5, by + 5.5); g.moveTo(bx + 5.5, by - 5.5); g.lineTo(bx - 5.5, by + 5.5); g.stroke();
+                g.restore();
+            }
+        }
+        g.strokeStyle = blk ? "#ff7846" : col;
         g.lineWidth = 1.8;
+        if (blk) g.setLineDash([6, 4]);
         g.beginPath(); g.arc(mx, my, rad, 0, 6.283); g.stroke();
+        g.setLineDash([]);
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             g.beginPath();
             g.moveTo(mx + dx * (rad + 4), my + dy * (rad + 4));
@@ -349,35 +371,40 @@ export class Overlay {
         }
         // подписи
         g.textAlign = "center";
-        g.font = "600 11px Rubik, sans-serif";
+        g.font = "600 11px Inter, sans-serif";
         let ty = my + rr + 16;
         if (aim.dist) {
             g.fillStyle = "rgba(235,238,225,.9)";
             g.fillText(Math.round(aim.dist) + " м", mx, ty);
             ty += 14;
         }
-        if (info && !info.blocked) {
+        if (blk) {
+            g.fillStyle = "#ff8a5c";
+            g.font = "700 11px Inter, sans-serif";
+            g.fillText("ПРЕПЯТСТВИЕ · " + blk.what + " · " + Math.round(blk.dist) + " м", mx, ty);
+            ty += 13;
+        } else if (info && !info.blocked) {
             g.fillStyle = col;
             const t = info.he ? (info.ok ? "фугас: пробьёт " + Math.round(info.eff) + " мм" : "фугас: " + Math.round(info.eff) + " мм брони")
-                : Math.round(info.pen) + " мм ▸ " + Math.round(info.eff) + " мм" + (info.rico > 0.3 ? " · рикошет" : "");
+                : Math.round(info.pen) + " мм ▸ " + Math.round(info.eff) + " мм" + (info.rico >= 0.05 ? " · рикошет " + Math.round(info.rico * 100) + "%" : "");
             g.fillText(t, mx, ty);
             ty += 13;
             g.fillStyle = "rgba(235,238,225,.7)";
-            g.font = "500 10px Rubik, sans-serif";
-            g.fillText(info.plate + (info.angle !== undefined ? " · " + Math.round(info.angle) + "°" : ""), mx, ty);
+            g.font = "500 10px Inter, sans-serif";
+            g.fillText(info.plate + (info.angle !== undefined ? " · " + Math.round(info.angle) + "°" : "") + (info.aligned === false ? " · орудие наводится" : ""), mx, ty);
         }
         // надписи попаданий
         let hy = my - rr - 14;
         for (const h of this.hitTexts) {
             const a = clamp(1.6 - h.t, 0, 1);
             g.globalAlpha = a;
-            g.font = `400 ${h === this.hitTexts[0] ? 16 : 13}px "Russo One", sans-serif`;
+            g.font = `800 ${h === this.hitTexts[0] ? 16 : 13}px "Exo 2", sans-serif`;
             g.fillStyle = "rgba(0,0,0,.6)";
             g.fillText(h.text, mx + 1, hy + 1 - h.t * 8);
             g.fillStyle = h.color;
             g.fillText(h.text, mx, hy - h.t * 8);
             if (h.sub) {
-                g.font = "500 10px Rubik, sans-serif";
+                g.font = "500 10px Inter, sans-serif";
                 g.fillText(h.sub, mx, hy + 12 - h.t * 8);
             }
             hy -= 26;

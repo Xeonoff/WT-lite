@@ -20,9 +20,13 @@ const CALLSIGNS = [
     ["Волк", "Рысь", "Барс", "Шакал", "Вепрь", "Лис", "Гюрза", "Кобра", "Варан", "Тур"],
 ];
 
+const freshStats = () => ({ kills: 0, assists: 0, hits: 0, pens: 0, crits: 0, caps: 0, shots: 0, deaths: 0, rp: Config.RP.BASE, wave: 0, dmgDone: 0 });
+
 export class Battle {
     /**
-     * opts: { mode, mapId, nation, lineup:[ids], seed, rangeTargets:[ids] }
+     * Одиночная игра: { mode, mapId, nation, lineup:[ids], seed, weather, difficulty }
+     * Сетевой бой (сервер): { mode, mapId, seed, weather, nations:[n0, n1], pilots:[{id, name, team, lineup}], teamSize }
+     * Реплика на клиенте: { replica: true, ... } — только мир, без ботов и режима (см. js/net/NetBattle.js)
      */
     constructor(opts) {
         this.opts = opts;
@@ -32,34 +36,57 @@ export class Battle {
         this.world = new World(opts.mapId, this.seed, opts.mode);
         const pool = BIOME_WEATHER[this.world.map.biome];
         let wid = opts.weather && opts.weather !== "random" ? opts.weather : pool[Math.floor(Math.random() * pool.length)];
-        if (!pool.includes(wid)) wid = pool[0];
+        if (!pool.includes(wid) && !opts.replica) wid = pool[0];
         if (opts.mode === "range") wid = "clear";
         this.weatherId = wid;
         this.weather = WEATHER[wid];
         this.difficulty = { easy: 0.68, normal: 1, hard: 1.22 }[opts.difficulty || "normal"] || 1;
-        this.vstats = {};
         this.vehicles = [];
         this.shots = [];
         this.strikes = [];
-        this.player = null;
-        this.playerTeam = 0;
-        this.nation = opts.nation;
-        this.enemyNation = opts.nation === "ussr" ? "germany" : "ussr";
-        this.lineup = opts.lineup.map((id) => ({ id, used: false, deaths: 0 }));
-        this.sp = 0;
-        this.spawns = 0;
-        this.deathAt = -1;
-        this.stats = { kills: 0, assists: 0, hits: 0, pens: 0, crits: 0, caps: 0, shots: 0, deaths: 0, rp: Config.RP.BASE, wave: 0, dmgDone: 0 };
+        // нации команд: в одиночной игре — нация игрока против второй
+        this.teamNation = opts.nations || [opts.nation, opts.nation === "ussr" ? "germany" : "ussr"];
+        this.nation = this.teamNation[0];
+        this.enemyNation = this.teamNation[1];
+        // «пилоты» — живые игроки; у одиночной игры один локальный пилот
+        this.pilots = [];
+        this.local = null;
+        if (opts.pilots) {
+            for (const p of opts.pilots) this.addPilot(p);
+            this.local = this.pilots.find((p) => p.local) || null;
+        } else if (opts.lineup) this.local = this.addPilot({ id: "local", name: "Вы", team: 0, lineup: opts.lineup, local: true });
+        this.playerTeam = this.local ? this.local.team : opts.viewTeam || 0;
         this.ended = false;
         this.result = null;
         this.spotAcc = 0;
         this.callIdx = [0, 0];
-        this.lineupBR = Math.max(...opts.lineup.map((id) => getVehicle(id).br));
+        const ids = this.pilots.flatMap((p) => p.lineup.map((l) => l.id));
+        this.lineupBR = ids.length ? Math.max(...ids.map((id) => getVehicle(id).br)) : opts.br || 3;
+        if (opts.replica) return;
         if (this.mode === "domination") this.modeCtl = new DominationMode(this);
         else if (this.mode === "waves") this.modeCtl = new WavesMode(this);
         else this.modeCtl = new RangeMode(this);
         this.modeCtl.start();
     }
+
+    addPilot(o) {
+        const p = {
+            id: o.id, name: o.name, team: o.team, nation: this.teamNation[o.team], local: !!o.local,
+            lineup: o.lineup.map((id) => ({ id, used: false, deaths: 0 })),
+            sp: 0, spawns: 0, deathAt: -1, stats: freshStats(), vstats: {}, vehicle: null, left: false,
+        };
+        this.pilots.push(p);
+        return p;
+    }
+
+    /* Совместимость с одиночной игрой: поля локального пилота */
+    get player() { return this.local ? this.local.vehicle : null; }
+    get lineup() { return this.local ? this.local.lineup : []; }
+    get sp() { return this.local ? this.local.sp : 0; }
+    get spawns() { return this.local ? this.local.spawns : 0; }
+    get deathAt() { return this.local ? this.local.deathAt : -1; }
+    get stats() { return this.local ? this.local.stats : freshStats(); }
+    get vstats() { return this.local ? this.local.vstats : {}; }
 
     callsign(team) {
         const list = CALLSIGNS[team === this.playerTeam ? 0 : 1];
@@ -73,8 +100,9 @@ export class Battle {
         const [fx, fz] = this.world.nearestFree(x, z, 30);
         const v = new Vehicle(def, team, fx, fz, a, opts);
         v.spawnT = this.time;
-        v.callsign = opts.callsign || (opts.isPlayer ? "Вы" : this.callsign(team));
-        if (!opts.isPlayer && !opts.static) {
+        v.pilot = opts.pilot || null;
+        v.callsign = opts.callsign || (opts.isPlayer ? "Вы" : opts.pilot ? opts.pilot.name : this.callsign(team));
+        if (!opts.pilot && !opts.static) {
             let skill = opts.skill ?? 0.55;
             if (team !== this.playerTeam) skill = clamp(skill * this.difficulty, 0.2, 0.95);
             v.brain = new Brain(v, this, skill);
@@ -96,47 +124,48 @@ export class Battle {
         return { x: sp.x + rnd(-sp.spread, sp.spread), z: sp.z + rnd(-6, 6), a: sp.a };
     }
 
-    spawnCost(id) { return this.spawns === 0 ? 0 : getVehicle(id).spCost; }
+    spawnCost(id, P = this.local) { return P.spawns === 0 ? 0 : getVehicle(id).spCost; }
 
-    canSpawn(id) {
-        const e = this.lineup.find((l) => l.id === id);
+    canSpawn(id, P = this.local) {
+        const e = P.lineup.find((l) => l.id === id);
         if (!e) return { ok: false, reason: "нет в сетапе" };
         if (this.mode !== "range" && e.used) return { ok: false, reason: "уже использована" };
-        const cost = this.spawnCost(id);
-        if (this.mode !== "range" && this.sp < cost) {
+        const cost = this.spawnCost(id, P);
+        if (this.mode !== "range" && P.sp < cost) {
             // резервный выезд: если очков не хватает, неиспользованная машина становится доступна через время
-            const wait = Config.SP.RESERVE_WAIT - (this.time - this.deathAt);
-            if (this.deathAt >= 0 && wait <= 0) return { ok: true, cost: 0, reserve: true };
-            return { ok: false, reason: "нужно " + cost + " ОВ" + (this.deathAt >= 0 ? " · резерв через " + Math.ceil(wait) + " с" : ""), cost, wait };
+            const wait = Config.SP.RESERVE_WAIT - (this.time - P.deathAt);
+            if (P.deathAt >= 0 && wait <= 0) return { ok: true, cost: 0, reserve: true };
+            return { ok: false, reason: "нужно " + cost + " ОВ" + (P.deathAt >= 0 ? " · резерв через " + Math.ceil(wait) + " с" : ""), cost, wait };
         }
         return { ok: true, cost };
     }
 
-    anySpawnAvailable() {
+    anySpawnAvailable(P = this.local) {
         if (this.mode === "range") return true;
-        return this.lineup.some((l) => this.canSpawn(l.id).ok);
+        return P.lineup.some((l) => this.canSpawn(l.id, P).ok);
     }
 
     /** Остались ли неиспользованные машины (с учётом будущего резервного выезда) */
-    hasSpawnsLeft() {
+    hasSpawnsLeft(P = this.local) {
         if (this.mode === "range") return true;
-        return this.lineup.some((l) => !l.used);
+        return P.lineup.some((l) => !l.used);
     }
 
-    spawnPlayer(id) {
-        const c = this.canSpawn(id);
-        if (!c.ok || (this.player && !this.player.dead && this.mode !== "range")) return null;
+    spawnPlayer(id, P = this.local) {
+        if (!P || this.ended) return null;
+        const c = this.canSpawn(id, P);
+        if (!c.ok || (P.vehicle && !P.vehicle.dead && this.mode !== "range")) return null;
         if (this.mode !== "range") {
-            this.sp -= c.cost;
-            this.lineup.find((l) => l.id === id).used = true;
+            P.sp -= c.cost;
+            P.lineup.find((l) => l.id === id).used = true;
         }
-        if (this.player && this.mode === "range") this.removeVehicle(this.player);
-        const p = this.modeCtl.playerSpawnPoint ? this.modeCtl.playerSpawnPoint() : this.spawnPoint(this.playerTeam);
-        const v = this.spawnVehicle(id, this.playerTeam, p.x, p.z, p.a, { isPlayer: true });
-        this.player = v;
-        (this.vstats[id] = this.vstats[id] || { spawns: 0, kills: 0 }).spawns++;
-        this.spawns++;
-        Events.emit("playerSpawn", { v });
+        if (P.vehicle && this.mode === "range") this.removeVehicle(P.vehicle);
+        const p = this.modeCtl.playerSpawnPoint ? this.modeCtl.playerSpawnPoint(P) : this.spawnPoint(P.team);
+        const v = this.spawnVehicle(id, P.team, p.x, p.z, p.a, { isPlayer: P.local, pilot: P });
+        P.vehicle = v;
+        (P.vstats[id] = P.vstats[id] || { spawns: 0, kills: 0 }).spawns++;
+        P.spawns++;
+        Events.emit("playerSpawn", { v, pilot: P });
         return v;
     }
 
@@ -191,20 +220,30 @@ export class Battle {
         v.trRate = step / Math.max(dt, 1e-4);
     }
 
-    /** Выстрел: направление по фактическому положению орудия + рассеивание */
-    fire(v) {
-        if (!v.canFire()) return false;
-        const sid = v.consumeShot();
-        if (!sid) return false;
-        const def = SHELLS[sid];
+    /**
+     * Линия выстрела без рассеивания: курс — по фактическому положению ствола,
+     * угол места — на точку прицеливания (с ограничением)
+     */
+    fireLine(v) {
         const m = muzzleWorld(v);
-        let yaw = v.gunYaw();
+        const yaw = v.gunYaw();
         let pitch = 0;
         if (v.aimPoint) {
             const dx = v.aimPoint[0] - m[0], dz = v.aimPoint[2] - m[2];
             const hd = Math.max(12, Math.hypot(dx, dz));
             pitch = clamp(Math.atan2(v.aimPoint[1] - m[1], hd), -0.12, 0.2);
         }
+        const dir = [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
+        return { m, yaw, pitch, dir };
+    }
+
+    /** Выстрел: линия ствола + рассеивание */
+    fire(v) {
+        if (!v.canFire()) return false;
+        const sid = v.consumeShot();
+        if (!sid) return false;
+        const def = SHELLS[sid];
+        let { m, yaw, pitch } = this.fireLine(v);
         const disp = v.dispersion();
         const r = disp * Math.sqrt(Math.random()), ph = Math.random() * TAU;
         yaw += Math.cos(ph) * r;
@@ -214,7 +253,7 @@ export class Battle {
         v.lastShot = this.time;
         v.bloom += def.cal >= 40 ? 1.6 : 0.35;
         v.recoil = 1;
-        if (v.isPlayer) this.stats.shots++;
+        if (v.pilot) v.pilot.stats.shots++;
         Events.emit("shot", { v, def, pos: m, dir });
         return true;
     }
@@ -233,7 +272,7 @@ export class Battle {
         if (Math.hypot(x - v.x, z - v.z) > A.RANGE) return { ok: false, reason: "слишком далеко" };
         const S = this.world.S;
         x = clamp(x, 4, S - 4); z = clamp(z, 4, S - 4);
-        v.artyT = this.time + (this.mode === "range" ? 5 : A.COOLDOWN * (v.isPlayer ? 1 : A.BOT_MULT));
+        v.artyT = this.time + (this.mode === "range" ? 5 : A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT));
         const def = SHELLS[v.def.nation === "ussr" ? "arty122" : "arty105"];
         const s = { x, z, team: v.team, by: v, def, t: 0, n: 0, total: A.SHELLS, r: A.SPREAD, next: A.DELAY, done: false };
         this.strikes.push(s);
@@ -296,10 +335,11 @@ export class Battle {
     }
 
     /* ─────────── Начисления ─────────── */
-    award(kind, mult = 1) {
+    award(kind, mult = 1, P = this.local) {
+        if (!P) return;
         const sp = Config.SP[kind] || 0, rp = Config.RP[kind] || 0;
-        this.sp += Math.round(sp * mult);
-        this.stats.rp += Math.round(rp * mult);
+        P.sp += Math.round(sp * mult);
+        P.stats.rp += Math.round(rp * mult);
     }
 
     creditDamage(shooter, target, res) {
@@ -307,10 +347,11 @@ export class Battle {
         if (!res.dmg.length) return;
         shooter.stats.dmg += res.dmg.length;
         if (res.crit) shooter.stats.crits++;
-        if (shooter === this.player) {
-            this.stats.dmgDone += res.dmg.length;
-            if (res.crit) { this.stats.crits++; this.award("CRIT", 0.5 + target.def.rank * 0.5); }
-            else this.award("HIT");
+        const P = shooter.pilot;
+        if (P) {
+            P.stats.dmgDone += res.dmg.length;
+            if (res.crit) { P.stats.crits++; this.award("CRIT", 0.5 + target.def.rank * 0.5, P); }
+            else this.award("HIT", 1, P);
         }
     }
 
@@ -319,9 +360,10 @@ export class Battle {
         if (sh && sh.team !== v.team) {
             sh.stats.hits++;
             if (res.kind === "pen" || res.kind === "he-pen") sh.stats.pens++;
-            if (sh === this.player) {
-                this.stats.hits++;
-                if (res.kind === "pen" || res.kind === "he-pen") this.stats.pens++;
+            const P = sh.pilot;
+            if (P) {
+                P.stats.hits++;
+                if (res.kind === "pen" || res.kind === "he-pen") P.stats.pens++;
             }
             this.creditDamage(sh, v, res);
         }
@@ -336,10 +378,11 @@ export class Battle {
         this.world.addWreck(v);
         if (killer && killer !== v && killer.team !== v.team) {
             killer.stats.kills++;
-            if (killer === this.player) {
-                this.stats.kills++;
-                (this.vstats[killer.def.id] = this.vstats[killer.def.id] || { spawns: 0, kills: 0 }).kills++;
-                this.award("KILL", 0.6 + v.def.rank * 0.4);
+            const P = killer.pilot;
+            if (P) {
+                P.stats.kills++;
+                (P.vstats[killer.def.id] = P.vstats[killer.def.id] || { spawns: 0, kills: 0 }).kills++;
+                this.award("KILL", 0.6 + v.def.rank * 0.4, P);
             }
         }
         // помощь
@@ -349,9 +392,9 @@ export class Battle {
             const a = this.vehicles.find((o) => o.id === id);
             if (!a || a.team === v.team) continue;
             a.stats.assists++;
-            if (a === this.player) { this.stats.assists++; this.award("ASSIST"); }
+            if (a.pilot) { a.pilot.stats.assists++; this.award("ASSIST", 1, a.pilot); }
         }
-        if (v === this.player) { this.stats.deaths++; this.deathAt = this.time; }
+        if (v.pilot) { v.pilot.stats.deaths++; v.pilot.deathAt = this.time; }
         Events.emit("destroyed", { v, cause, killer });
         this.modeCtl.onDestroyed(v, killer);
     }
@@ -360,9 +403,13 @@ export class Battle {
         if (this.ended) return;
         this.ended = true;
         this.endT = 0;
-        const win = winner === this.playerTeam;
-        if (win) this.stats.rp = Math.round(this.stats.rp * Config.RP.WIN_MULT);
-        this.result = { win, winner, reason, stats: { ...this.stats }, mode: this.mode };
+        for (const P of this.pilots) if (P.team === winner) P.stats.rp = Math.round(P.stats.rp * Config.RP.WIN_MULT);
+        const L = this.local;
+        this.result = {
+            win: L ? winner === L.team : false, winner, reason, mode: this.mode,
+            stats: L ? { ...L.stats } : null,
+            pilots: this.pilots.map((P) => ({ id: P.id, name: P.name, team: P.team, stats: { ...P.stats }, vstats: P.vstats })),
+        };
         Events.emit("battleEnd", this.result);
     }
 }
