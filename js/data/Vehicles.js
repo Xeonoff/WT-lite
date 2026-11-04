@@ -71,20 +71,21 @@ export const VEHICLES = {
     },
     kv1: {
         name: "КВ-1 (ЗиС-5)", nation: "ussr", rank: 1, br: 4.7, role: "heavy",
-        desc: "Тяжёлый прорыв 1941 года: 75 мм корпуса и 95 мм башни неуязвимы для большинства немецких пушек ранних рангов. Медленный — береги борта и не подставляй корму.",
-        dims: { L: 6.75, W: 3.32, H: 1.43, tw: 0.62, th: 0.9 },
-        hullForm: { nose: [["front", 0.42], ["glacis", 0.12], ["lower", 0.46]], sponson: 0.3 },
+        desc: "Тяжёлый прорыв 1941 года: 75 мм брони по кругу и 90-мм маска орудия неуязвимы для большинства немецких пушек ранних рангов. Слабые места — средний лобовой лист, крыша МТО и корма. Медленный — береги борта.",
+        dims: { L: 6.67, W: 3.32, H: 1.62, tw: 0.7, th: 1.2 },
+        hullForm: { nose: [["front", 0.27], ["glacis", 0.22], ["lower", 0.51]], sponson: 0.44 },
         armor: {
-            hull: { front: [75, 30], glacis: [40, 72], lower: [75, 26], side: [75, 0], rear: [60, 10], roof: [30] },
-            turret: { front: [95, 12], side: [75, 15], rear: [75, 15], roof: [30] },
+            hull: { front: [75, 30], glacis: [60, 70], lower: [75, 25], side: [75, 0], rear: [60, 50], roof: [40] },
+            turret: { front: [75, 20], side: [75, 15], rear: [75, 15], roof: [40] },
         },
-        turret: { x: 0.45, hl: 1.14, hw: 1, h: 0.88, shape: "box" },
+        turret: { x: 0.3, hl: 1.13, hw: 1, h: 0.86, shape: "box" },
         gun: { name: "ЗиС-5", cal: 76, len: 3.3, reload: 6.6, disp: 2.2, aim: 1.8 },
         shells: [["br350a", 70], ["of350", 30], ["br350p", 10]],
         mob: { speed: 35, reverse: 6, pw: 12, hull: 30, turret: 24, mass: 45 },
         engine: { type: "diesel", cyl: 12, idle: 550, max: 1900, gears: 5 },
         crew: ["driver", "radio", "gunner", "loader", "commander"],
         layout: "rear", paint: "4bo", details: { exhaust: 2 },
+        model: "kv1",           // детальная модель: js/data/models/KV1Spec.js + js/render/models/KV1Model.js
     },
     su76m: {
         name: "СУ-76М", nation: "ussr", rank: 1, br: 3.0, role: "td",
@@ -392,9 +393,11 @@ export const CREW_SEATS = {
 export const MODULE_NAMES = {
     engine: "Двигатель", transmission: "Трансмиссия", fuel: "Топливный бак", ammo: "Боеукладка",
     breech: "Казённик", barrel: "Ствол", drive: "Пов. механизм", track: "Гусеница",
+    radiator: "Радиатор", oil: "Масляный бак", radio: "Радиостанция", battery: "Аккумуляторы",
 };
 
 export const MODULE_SHORT = {
     engine: "ДВИГ", transmission: "ТРАНСМ", fuel: "ТОПЛ", ammo: "БК",
     breech: "КАЗЁН", barrel: "СТВОЛ", drive: "ПОВОР", track: "ГУС",
+    radiator: "РАДИАТ", oil: "МАСЛО", radio: "РАЦИЯ", battery: "АКБ",
 };

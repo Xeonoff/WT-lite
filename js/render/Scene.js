@@ -2,7 +2,10 @@ import * as THREE from "three";
 import { Config } from "../core/Config.js";
 import { Events } from "../core/Events.js";
 import { Settings } from "../core/Settings.js";
-import { damp, rnd, clamp } from "../core/Utils.js";
+import { damp, rnd, clamp, angDiff } from "../core/Utils.js";
+
+/** Направление взгляда по курсу и углу места (курс — как у машин: 0 — вдоль +X, рост — к +Z) */
+const lookDir = (yaw, pitch) => [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
 import { buildVehicleMesh, burnMesh, disposeVehicleMesh } from "./VehicleMesh.js";
 import { WorldMesh } from "./WorldMesh.js";
 import { Particles } from "./Particles.js";
@@ -149,12 +152,13 @@ export class Scene3D {
         for (const v of b.vehicles) {
             const vm = this.ensureVM(v);
             const seen = v.team === pt || v.visible[pt] || v.dead;
-            vm.root.visible = seen;
+            // в прицеле своя машина не рисуется — камера внутри башни
+            vm.root.visible = seen && !(this.hideOwn && v.isPlayer);
             vm.root.position.set(v.x, 0, v.z);
             vm.root.rotation.y = -v.a;
             vm.ring.position.set(v.x, 0.05, v.z);
-            vm.ring.visible = seen && !v.dead;
-            if (vm.turret.parent === vm.root) vm.turret.rotation.y = -v.turretRel();
+            vm.ring.visible = seen && !v.dead && !(this.hideOwn && v.isPlayer);
+            if (vm.loose !== vm.turret) vm.turret.rotation.y = -v.turretRel();
             vm.gun.rotation.y = -v.gunRel();
             // откат ствола
             if (v.recoil > 0) { vm.recoil = 1; v.recoil = 0; }
@@ -166,8 +170,9 @@ export class Scene3D {
                 continue;
             }
             // гусеницы
+            if (vm.setTrackPhase) vm.setTrackPhase(v.trackPhase);
             for (let s = 0; s < 2; s++) {
-                vm.tracks[s].tex.offset.x = -v.trackPhase[s] / 0.7;
+                if (!vm.setTrackPhase) vm.tracks[s].tex.offset.x = -v.trackPhase[s] / 0.7;
                 const dph = Math.abs(v.trackPhase[s] - vm.lastPhase[s]);
                 vm.lastPhase[s] = v.trackPhase[s];
                 vm.markAcc[s] = Math.min(vm.markAcc[s] + dph, 8);
@@ -340,7 +345,11 @@ export class Scene3D {
     }
 
     /* ─────────── Камера ─────────── */
-    updateCamera(dt, focus, aim, binoc, zoomH) {
+    /**
+     * view (необязательно): { t: 0 — вид сверху … 1 — вид сзади, yaw, pitch, dist, pivot: [x,y,z],
+     *                         sight: { pos: [x,y,z], fov } — прицел наводчика }
+     */
+    updateCamera(dt, focus, aim, binoc, zoomH, view) {
         const C = Config.CAMERA;
         let tx = focus.x, tz = focus.z;
         if (aim) {
@@ -365,31 +374,74 @@ export class Scene3D {
         const sh = this.cam.shake * this.cam.shake * 1.4;
         this.cam.sx = rnd(-sh, sh);
         this.cam.sz = rnd(-sh, sh);
-        this.placeCamera();
+        this.placeCamera(view);
     }
 
-    placeCamera() {
+    setLens(fov, near) {
+        const c = this.camera;
+        if (Math.abs(c.fov - fov) < 1e-3 && Math.abs(c.near - near) < 1e-3) return;
+        c.fov = fov;
+        c.near = near;
+        c.updateProjectionMatrix();
+    }
+
+    placeCamera(view) {
+        const C = Config.CAMERA;
         const tilt = clamp(Settings.get("tilt"), 0, 40) * Math.PI / 180;
         const x = this.cam.x + this.cam.sx, z = this.cam.z + this.cam.sz, h = this.cam.h;
-        this.camera.position.set(x, h, z + h * Math.tan(tilt));
-        this.camera.lookAt(x, 0, z);
-        this.camera.updateMatrixWorld();
+        const cam = this.camera;
+        const t = view ? clamp(view.t, 0, 1) : 0;
+        // от вида: дальность для дымки, центр и размер области теней
+        let fogD = h / Math.cos(tilt), sx = x, sz = z, ext = h * 0.85 + 20;
+        this.hideOwn = !!(view && view.sight);
+        if (view && view.sight) {
+            // прицел наводчика: камера у прицела, направление — куда смотрит игрок
+            const D = lookDir(view.yaw, view.pitch);
+            const [px, py, pz] = view.sight.pos;
+            cam.position.set(px, py, pz);
+            cam.lookAt(px + D[0], py + D[1], pz + D[2]);
+            this.setLens(view.sight.fov, 0.15);
+            fogD = 20;
+            sx = px + D[0] * 45; sz = pz + D[2] * 45; ext = 75;
+        } else if (t > 1e-3) {
+            // орбита вокруг точки обзора: из-под вертикали (вид сверху) за корму машины;
+            // курс поворачивается к направлению взгляда, дистанция сокращается
+            const e = t * t * (3 - 2 * t);
+            const yawTop = -Math.PI / 2, pitchTop = -(Math.PI / 2 - Math.max(tilt, 0.02));
+            const yaw = yawTop + angDiff(yawTop, view.yaw) * e;
+            const pitch = pitchTop + (view.pitch - pitchTop) * e;
+            const R = (h / Math.cos(tilt)) * (1 - e) + view.dist * e;
+            const P = view.pivot;
+            const tx = x + (P[0] - x) * e, ty = P[1] * e, tz = z + (P[2] - z) * e;
+            const D = lookDir(yaw, pitch);
+            const px = tx - D[0] * R, pz = tz - D[2] * R;
+            const py = Math.max(1.1, ty - D[1] * R + 0.7 * e);
+            cam.position.set(px, py, pz);
+            cam.lookAt(px + D[0], py + D[1], pz + D[2]);
+            this.setLens(C.FOV + (C.TP.FOV - C.FOV) * e, 2 + (0.3 - 2) * e);
+            fogD = fogD * (1 - e) + 25 * e;
+            sx = x + (P[0] + D[0] * 30 - x) * e; sz = z + (P[2] + D[2] * 30 - z) * e;
+            ext = ext * (1 - e) + 70 * e;
+        } else {
+            cam.position.set(x, h, z + h * Math.tan(tilt));
+            cam.lookAt(x, 0, z);
+            this.setLens(C.FOV, 2);
+        }
+        cam.updateMatrixWorld();
         // дымка зависит от расстояния до точки обзора, иначе в виде сверху туман однороден
         if (this.scene.fog && this.weather) {
-            const d = h / Math.cos(tilt);
-            this.scene.fog.near = Math.max(1, d + this.weather.fog[0]);
-            this.scene.fog.far = d + this.weather.fog[1];
+            this.scene.fog.near = Math.max(1, fogD + this.weather.fog[0]);
+            this.scene.fog.far = fogD + this.weather.fog[1];
         }
         // солнце и тени следуют за камерой
-        const ext = h * 0.85 + 20;
         const sc = this.sun.shadow.camera;
-        if (sc.right !== ext) {
+        if (Math.abs(sc.right - ext) > 0.5) {
             sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext;
             sc.near = 1; sc.far = 500;
             sc.updateProjectionMatrix();
         }
-        this.sun.position.set(x - 90, 170, z + 60);
-        this.sun.target.position.set(x, 0, z);
+        this.sun.position.set(sx - 90, 170, sz + 60);
+        this.sun.target.position.set(sx, 0, sz);
         this.sun.target.updateMatrixWorld();
     }
 

@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { camoTexture, trackTexture, runningGearTexture } from "./Textures.js";
 import { turretSlopeRing, hullHalfWidth, skirtSpan } from "../data/VehicleBuild.js";
+import { createKV1, layoutTrack as layoutKV1Track, mergeGeometries as mergeModel } from "./models/KV1Model.js";
+
+/** Детальные модели (иначе машина строится процедурно по описанию) */
+const DETAILED = { kv1: { create: createKV1, layoutTrack: layoutKV1Track } };
+const detailedTemplates = new Map();
 
 const geoCache = new Map();
 const matCache = new Map();
@@ -210,7 +215,8 @@ function trackGeometry(def) {
  * Модель машины. Структура:
  * root (позиция/курс) → hull, tracks, details, turret (поворот) → gun (поворот в рубке) → barrel (откат)
  */
-export function buildVehicleMesh(def, biomeKey) {
+export function buildVehicleMesh(def, biomeKey, opts = {}) {
+    if (def.model && DETAILED[def.model]) return buildDetailed(def, biomeKey, !!opts.full);
     const { L, W, H, tw, th } = def.dims;
     const T = def.turret;
     const camo = camoMat(def.paint, biomeKey);
@@ -379,8 +385,10 @@ export function disposeVehicleMesh(vm) {
     for (const r of roots) {
         r.traverse((o) => {
             if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+            if (o.isInstancedMesh) o.dispose();
         });
     }
+    if (vm.disposeExtra) vm.disposeExtra();
     for (const t of vm.tracks) {
         t.tex.dispose();
         for (const m of t.mats) m.dispose();
@@ -390,4 +398,107 @@ export function disposeVehicleMesh(vm) {
 /** Перекрасить в «сгоревший» вид */
 export function burnMesh(vm) {
     for (const m of vm.meshes) m.material = BURNT;
+}
+
+/* ─────────── Детальные модели (js/render/models) ───────────
+ * Модель строится в своих осях (+Z нос, +X левый борт) и вкладывается в игровой корень,
+ * повёрнутый на 90°. В бою используется «запечённая» копия: неподвижные детали слиты
+ * по материалам (несколько вызовов отрисовки вместо сотен), катки и гусеницы — отдельно.
+ */
+function paintDarkOf(camo) {
+    const key = camo.uuid + ":dark";
+    if (matCache.has(key)) return matCache.get(key);
+    const m = camo.clone();
+    m.color.setHex(0xa8a8a8);
+    matCache.set(key, m);
+    return m;
+}
+
+function bakeDetailed(kv) {
+    // внутреннее устройство в бою не показывается
+    for (const g of [...kv.modules, ...kv.crew, ...kv.zones]) g.parent.remove(g);
+    kv.root.updateMatrixWorld(true);
+    const buckets = [kv.hull, kv.turret, kv.gun];
+    const keep = new Set([...kv.wheels, ...kv.tracks]);
+    const groups = new Map();
+    const remove = [];
+    kv.root.traverse((o) => {
+        if (o.isLineSegments) { remove.push(o); return; }
+        if (!o.isMesh || o.isInstancedMesh || keep.has(o) || o.userData.recoil) return;
+        let b = o.parent;
+        while (b && !buckets.includes(b)) b = b.parent;
+        if (!b) return;
+        const key = b.name + "|" + o.material.uuid;
+        if (!groups.has(key)) groups.set(key, { bucket: b, material: o.material, geos: [] });
+        const g = o.geometry.clone();
+        g.applyMatrix4(new THREE.Matrix4().copy(b.matrixWorld).invert().multiply(o.matrixWorld));
+        groups.get(key).geos.push(g);
+        remove.push(o);
+    });
+    for (const o of remove) if (o.parent) o.parent.remove(o);
+    for (const { bucket, material, geos } of groups.values()) {
+        const m = new THREE.Mesh(mergeModel(geos), material);
+        m.castShadow = m.receiveShadow = true;
+        bucket.add(m);
+    }
+    kv.root.traverse((o) => { if (o.geometry) o.geometry.userData.shared = true; });
+    return kv;
+}
+
+function wrapDetailed(def, model, camo, kv) {
+    const layoutTrack = DETAILED[def.model].layoutTrack;
+    const root = new THREE.Group();
+    const frame = new THREE.Group();
+    frame.rotation.y = Math.PI / 2;          // +Z модели → +X игры
+    root.add(frame);
+    frame.add(model);
+    const turret = model.getObjectByName("turret");
+    const gun = model.getObjectByName("gun");
+    const barrel = model.getObjectByName("barrel");
+    const tracks = [model.getObjectByName("track_L"), model.getObjectByName("track_R")];
+    const wheels = [];
+    model.traverse((o) => { if (o.name.startsWith("wheel:")) wheels.push(o); });
+    const meshes = [];
+    model.traverse((o) => { if (o.isMesh && o.userData.kind !== "module" && !o.userData.moduleId && !o.userData.crewId && o.userData.kind !== "zone" && o.userData.kind !== "rounds") meshes.push(o); });
+    for (const m of meshes) { m.castShadow = true; m.receiveShadow = true; }
+    let phase = [NaN, NaN];
+    const vm = {
+        root, turret, gun, tracks: [], meshes, camo, def, detailed: true, model: kv || null,
+        // откат ствола: в игре — вдоль +X, в модели — вдоль +Z
+        barrel: { position: { set x(v) { if (barrel) barrel.position.z = v; }, get x() { return barrel ? barrel.position.z : 0; } } },
+        setTrackPhase(ph) {
+            if (kv) { kv.setTrackPhase(ph[0], ph[1]); return; }
+            if (ph[0] === phase[0] && ph[1] === phase[1]) return;
+            phase = [ph[0], ph[1]];
+            for (const tr of tracks) if (tr) layoutTrack(tr, -(tr.userData.side > 0 ? ph[0] : ph[1]));
+            for (const w of wheels) w.rotation.x = (w.userData.side > 0 ? ph[0] : ph[1]) / w.userData.radius;
+        },
+    };
+    if (kv) {
+        // полная модель (ангар): материалы этого экземпляра освобождаем вместе с ним
+        vm.disposeExtra = () => kv.root.traverse((o) => {
+            const ms = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+            for (const m of ms) if (m !== camo && !matCacheHas(m)) m.dispose();
+        });
+    }
+    return vm;
+}
+
+const matCacheHas = (m) => { for (const v of matCache.values()) if (v === m) return true; return false; };
+
+function buildDetailed(def, biome, full) {
+    const camo = camoMat(def.paint, biome);
+    const paintDark = paintDarkOf(camo);
+    const create = DETAILED[def.model].create;
+    if (full) {
+        const kv = create({ paint: camo, paintDark });
+        return wrapDetailed(def, kv.root, camo, kv);
+    }
+    const key = def.id + ":" + biome;
+    let tpl = detailedTemplates.get(key);
+    if (!tpl) {
+        tpl = bakeDetailed(create({ paint: camo, paintDark }));
+        detailedTemplates.set(key, tpl);
+    }
+    return wrapDetailed(def, tpl.root.clone(true), camo, null);
 }

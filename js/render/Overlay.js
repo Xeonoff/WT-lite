@@ -60,9 +60,11 @@ export class Overlay {
             else if (!ally) this.edgeArrow(x, y, front, COL.enemy, p ? Math.round(Math.hypot(v.x - p.x, v.z - p.z)) + " м" : "");
         }
         if (p && !p.dead) {
+            const sight = game.sightOn();
             this.leadMarks(b, p, sc, pt);
-            this.playerMarks(game, p, sc);
+            if (!sight) this.playerMarks(game, p, sc);
             this.drawIncoming(p, sc, dt);
+            if (sight) this.sightReticle(game, p);
             this.crosshair(game, p, sc);
         } else {
             this.incoming.length = 0;
@@ -280,9 +282,54 @@ export class Overlay {
         this.incoming = this.incoming.filter((h) => h.t < 2.6);
     }
 
+    /** Окуляр прицела наводчика: затемнение вокруг, сетка по нации машины, кратность */
+    sightReticle(game, p) {
+        const g = this.g, w = this.w, h = this.h, cx = w / 2, cy = h / 2;
+        const R = Math.min(w, h) * 0.47;
+        g.save();
+        g.fillStyle = "rgba(4,5,4,.94)";
+        g.beginPath();
+        g.rect(0, 0, w, h);
+        g.arc(cx, cy, R, 0, Math.PI * 2, true);
+        g.fill("evenodd");
+        const edge = g.createRadialGradient(cx, cy, R * 0.78, cx, cy, R);
+        edge.addColorStop(0, "rgba(0,0,0,0)");
+        edge.addColorStop(1, "rgba(0,0,0,.8)");
+        g.fillStyle = edge;
+        g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+        const ink = "rgba(12,12,10,.92)";
+        g.strokeStyle = ink;
+        g.fillStyle = ink;
+        g.lineWidth = 1.6;
+        if (p.def.nation === "ussr") {
+            // советский прицел: угольник в центре, боковые штрихи, вертикаль снизу
+            g.beginPath(); g.moveTo(cx - 13, cy + 15); g.lineTo(cx, cy); g.lineTo(cx + 13, cy + 15); g.stroke();
+            for (const s of [-1, 1]) {
+                g.beginPath(); g.moveTo(cx + s * 30, cy); g.lineTo(cx + s * R * 0.96, cy); g.stroke();
+                for (let i = 1; i <= 6; i++) {
+                    const x = cx + s * (30 + i * 24);
+                    g.beginPath(); g.moveTo(x, cy); g.lineTo(x, cy + (i % 2 ? 7 : 13)); g.stroke();
+                }
+            }
+            g.beginPath(); g.moveTo(cx, cy + 42); g.lineTo(cx, cy + R * 0.62); g.stroke();
+        } else {
+            // немецкий TZF: три ряда треугольников и горизонталь
+            const tri = (x, y, s) => { g.beginPath(); g.moveTo(x - s * 0.45, y + s); g.lineTo(x, y); g.lineTo(x + s * 0.45, y + s); g.closePath(); g.fill(); };
+            tri(cx, cy, 24);
+            for (const s of [-1, 1]) for (let i = 1; i <= 3; i++) tri(cx + s * i * 48, cy + 6, 14);
+            g.beginPath(); g.moveTo(cx - R * 0.96, cy + 24); g.lineTo(cx - 170, cy + 24); g.moveTo(cx + 170, cy + 24); g.lineTo(cx + R * 0.96, cy + 24); g.stroke();
+        }
+        g.font = "700 12px Inter, sans-serif";
+        g.textAlign = "center";
+        g.fillStyle = "rgba(235,238,225,.8)";
+        const T = Config.CAMERA.TP;
+        g.fillText(`×${(T.FOV / T.SIGHT_FOV[game.sightZoom]).toFixed(1).replace(".", ",")} · колесо — кратность`, cx, cy - R + 30);
+        g.restore();
+    }
+
     crosshair(game, p, sc) {
         const g = this.g;
-        const m = game.input.mouse;
+        const m = game.aimScreen();
         const aim = game.aim;
         const mx = m.x, my = m.y;
         // цвет по индикатору пробития

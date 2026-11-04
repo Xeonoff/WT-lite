@@ -366,6 +366,7 @@ export class Vehicle {
         const out = [];
         for (const id in this.mods) {
             const m = this.mods[id];
+            if (m.def.aux) continue;
             if (m.hp < m.maxHp * Config.REPAIR.RESTORE_TO - 0.01) out.push(m);
         }
         return out;

@@ -10,6 +10,7 @@ const DEFAULTS = {
     xray: true,             // рентген своих попаданий
     xrayIncoming: true,     // рентген попаданий по себе
     tilt: 20,               // наклон камеры, градусы от вертикали
+    lookSens: 1,            // чувствительность мыши в виде сзади и в прицеле
     wheel: "zoom",          // zoom | shell
     hullAssist: true,       // доворот корпуса ПТ-САУ за прицелом
     difficulty: "normal",   // easy | normal | hard — меткость и реакция ИИ противника

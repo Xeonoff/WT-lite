@@ -1,6 +1,11 @@
 import { VEHICLES, CREW_SEATS, MODULE_NAMES } from "./Vehicles.js";
 import { SHELLS } from "./Shells.js";
 import { Config } from "../core/Config.js";
+import { KV1_SPEC } from "./models/KV1Spec.js";
+import { applyModel } from "./models/ModelBuild.js";
+
+/** Машины с детальной моделью: броня, модули и экипаж берутся из неё */
+const MODELS = { kv1: KV1_SPEC };
 import { DEG } from "../core/Utils.js";
 
 export const CLEARANCE = 0.3;
@@ -392,6 +397,10 @@ function prepare(id, def) {
     // Орудие
     def.gunPivot = [T.hl * 0.95, T.h * 0.5, 0];
     def.muzzleY = def.dims.H + T.h * 0.5;
+    if (def.model && MODELS[def.model]) {
+        applyModel(def, MODELS[def.model], MODULE_NAMES);
+        def.turretPoly = convexHull(def.turretOutline);
+    }
     def.gun.mag = def.gun.mag || 1;
     def.gun.rof = def.gun.rof || 0;
     // Боекомплект и стеллажи
@@ -400,14 +409,22 @@ function prepare(id, def) {
     const vol = (m) => (m.max[0] - m.min[0]) * (m.max[1] - m.min[1]) * (m.max[2] - m.min[2]);
     const vSum = racks.reduce((s, m) => s + vol(m), 0) || 1;
     // порядок расхода: ниша башни и борта — первыми, пол — последним
-    racks.sort((a, b) => rackOrder(a) - rackOrder(b));
-    racks.forEach((m, i) => { m.cap = Math.max(1, Math.round((vol(m) / vSum) * def.ammoTotal)); m.order = i; });
+    if (racks.every((m) => m.rounds)) {
+        // детальная модель: ёмкость стеллажей по реальной укладке, пересчитанная на БК игры
+        const rSum = racks.reduce((s, m) => s + m.rounds, 0);
+        racks.sort((a, b) => a.order - b.order);
+        racks.forEach((m) => { m.cap = Math.max(1, Math.round((m.rounds / rSum) * def.ammoTotal)); });
+    } else {
+        racks.sort((a, b) => rackOrder(a) - rackOrder(b));
+        racks.forEach((m, i) => { m.cap = Math.max(1, Math.round((vol(m) / vSum) * def.ammoTotal)); m.order = i; });
+    }
     def.rackOrder = racks.map((m) => m.id);
     def.spCost = Config.SP.COST[def.rank] || 150;
     def.crewTitles = {};
     for (const s of def.crew) def.crewTitles[s] = (def.titles && def.titles[s]) || CREW_SEATS[s].name;
     // радиус для широкой фазы
-    def.radius = Math.hypot(def.dims.L / 2 + Math.max(0, T.x + T.hl + def.gun.len - def.dims.L / 2), def.dims.W / 2) + 0.3;
+    const reach = def.detailed ? T.x + def.gunPivot[0] + def.gun.len : T.x + T.hl + def.gun.len;
+    def.radius = Math.hypot(def.dims.L / 2 + Math.max(0, reach - def.dims.L / 2), def.dims.W / 2) + 0.3;
     def.bodyRadius = Math.hypot(def.dims.L / 2, def.dims.W / 2);
     def.shellIds = def.shells.map(([sid]) => sid);
     for (const sid of def.shellIds) if (!SHELLS[sid]) console.warn("Unknown shell", sid, "in", id);

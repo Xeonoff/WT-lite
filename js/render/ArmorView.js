@@ -85,6 +85,7 @@ function edgeGeometry(poly) {
 const MODULE_COL = {
     ammo: 0xff4d3d, fuel: 0xff9a2e, engine: 0x9aa7b4, transmission: 0x7d8a96, breech: 0xc9b07a,
     barrel: 0x8c8a80, drive: 0xb48cff, track: 0x50565c,
+    radiator: 0x46b3c9, oil: 0xa9743f, radio: 0x3f6fd8, battery: 0x57b05a,
 };
 
 /**

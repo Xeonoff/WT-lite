@@ -8,7 +8,7 @@ import { SHELLS } from "./data/Shells.js";
 import { CREW_SEATS } from "./data/Vehicles.js";
 import { getVehicle, vehiclesOf } from "./data/VehicleBuild.js";
 import { Battle } from "./sim/Battle.js";
-import { raycastVehicle, traceShot, muzzleWorld } from "./sim/Armor.js";
+import { raycastVehicle, traceShot, muzzleWorld, frameToHull, hullToWorld } from "./sim/Armor.js";
 import { probeShot } from "./sim/Projectiles.js";
 import { Scene3D } from "./render/Scene.js";
 import { Overlay } from "./render/Overlay.js";
@@ -42,6 +42,15 @@ export class Game {
         this.paused = false;
         this.aim = { point: null, dist: 0, target: null, pen: null, penT: 0 };
         this.zoomH = Config.CAMERA.HEIGHT;
+        // вид сзади и прицел: camT — цель (0 сверху … 1 сзади), camTs — сглаженное значение
+        this.camT = 0;
+        this.camTs = 0;
+        this.tpDist = Config.CAMERA.TP.DIST;
+        this.look = { yaw: 0, pitch: Config.CAMERA.TP.PITCH };
+        this.sightToggle = false;
+        this.sightZoom = 0;
+        this.ourUnlock = false;
+        this.unlockAt = -1e9;
         this.lastXray = null;
         this.deathT = 0;
         this.focus = { x: 0, z: 0 };
@@ -49,6 +58,7 @@ export class Game {
         this.bindNet();
         this.bindChat();
         this.bindKeys();
+        this.bindLook();
         this.bindFeedback();
         addEventListener("blur", () => { if (this.state === "battle" && !this.paused && !this.battle.ended && !this.battle.net) this.pause(); });
         document.addEventListener("pointerdown", () => this.audio.init(), { once: false });
@@ -154,6 +164,7 @@ export class Game {
         this.paused = false;
         $("pauseScr").classList.add("hidden");
         this.screens.closeModal();
+        if (this.lookWanted()) this.requestLock();
     }
 
     leaveBattle() {
@@ -308,6 +319,7 @@ export class Game {
         const inBattle = () => this.state === "battle" && this.battle && !this.paused && !this.screens.modalOpen;
         const player = () => (inBattle() && this.battle.player && !this.battle.player.dead ? this.battle.player : null);
         I.on("Escape", () => {
+            if (performance.now() - this.unlockAt < 400) return;
             if (this.screens.closeModal()) return;
             if (this.state === "battle") {
                 if (this.battle && this.battle.ended) return;
@@ -369,10 +381,172 @@ export class Game {
                 const ids = p.def.shellIds;
                 const i = ids.indexOf(p.shell);
                 this.selectShell(ids[(i + (dy > 0 ? 1 : ids.length - 1)) % ids.length]);
-            } else {
-                this.zoomH = clamp(this.zoomH * (dy > 0 ? 1.1 : 0.9), Config.CAMERA.MIN_H, Config.CAMERA.MAX_H);
+            } else this.zoomStep(dy < 0 ? 1 : -1);
+        });
+        I.on("KeyV", () => {
+            if (!player()) return;
+            this.setViewT(this.camT >= 1 ? 0 : 1);
+            if (this.camT === 0 && this.zoomH < Config.CAMERA.MIN_H + 1) this.zoomH = Config.CAMERA.MIN_H;
+        });
+        I.on("ShiftLeft", () => { if (player() && this.camT >= 1) this.sightToggle = !this.sightToggle; });
+    }
+
+    /** Шаг колеса: +1 — приблизить, −1 — отдалить */
+    zoomStep(dir) {
+        const C = Config.CAMERA, T = C.TP;
+        if (this.sightOn()) { this.sightZoom = dir > 0 ? 1 : 0; return; }
+        const p = this.battle && this.battle.player;
+        if (dir > 0) {
+            if (this.zoomH > C.MIN_H + 0.5) this.zoomH = Math.max(C.MIN_H, this.zoomH * 0.9);
+            else if (this.camT < 1 && p && !p.dead) this.setViewT(Math.min(1, this.camT + T.STEP));
+            else if (this.camT >= 1) this.tpDist = Math.max(T.MIN_DIST, this.tpDist * 0.86);
+        } else {
+            if (this.camT >= 1 && this.tpDist < T.DIST - 0.01) this.tpDist = Math.min(T.DIST, this.tpDist / 0.86);
+            else if (this.camT > 0) this.setViewT(Math.max(0, this.camT - T.STEP));
+            else this.zoomH = Math.min(C.MAX_H, this.zoomH * 1.1);
+        }
+    }
+
+    setViewT(t) {
+        const p = this.battle && this.battle.player;
+        if (this.camT === 0 && t > 0 && p) {
+            // камера разворачивается за корму машины
+            this.look.yaw = p.a;
+            this.look.pitch = Config.CAMERA.TP.PITCH;
+        }
+        if (t < 1e-6) t = 0;
+        if (t > 1 - 1e-6) t = 1;
+        this.camT = t;
+        if (t >= 1) this.requestLock();
+        else { this.sightToggle = false; this.releaseLock(); }
+    }
+
+    /* ─────────── Обзор мышью (вид сзади и прицел) ─────────── */
+    bindLook() {
+        const gl = $("gl");
+        document.addEventListener("pointerlockchange", () => {
+            if (document.pointerLockElement) return;
+            this.unlockAt = performance.now();
+            // захват снял браузер (Esc) — как в играх, открываем паузу
+            if (!this.ourUnlock && this.state === "battle" && this.battle && !this.battle.ended && !this.paused && !this.screens.modalOpen) this.pause();
+            this.ourUnlock = false;
+        });
+        document.addEventListener("pointerlockerror", () => {
+            if (this.lookWanted() && !this.lockHint) {
+                this.lockHint = true;
+                this.hud.log("Вид сзади: щёлкните мышью, чтобы обзор следовал за мышью", "tip", 6000);
             }
         });
+        // первое нажатие в виде сзади без захвата только захватывает мышь (кроме ПКМ — прицел)
+        this.input.onDown = (e) => {
+            if (!this.lookWanted() || document.pointerLockElement === gl) return false;
+            this.requestLock();
+            return e.button === 0;
+        };
+    }
+
+    lookWanted() {
+        const b = this.battle, p = b && b.player;
+        return this.state === "battle" && !!p && !p.dead && !b.ended && this.camT >= 1 && !this.paused && !this.screens.modalOpen &&
+            $("spawnScr").classList.contains("hidden");
+    }
+
+    mouseLook() { return this.lookWanted() && this.camTs > 0.95 && document.pointerLockElement === $("gl"); }
+
+    sightOn() {
+        const p = this.battle && this.battle.player;
+        return this.camT >= 1 && this.camTs > 0.9 && !!p && !p.dead && (this.input.mouse.right || this.sightToggle);
+    }
+
+    requestLock() {
+        const gl = $("gl");
+        if (document.pointerLockElement === gl) return;
+        try {
+            const r = gl.requestPointerLock();
+            if (r && r.catch) r.catch(() => {});
+        } catch { /* нет поддержки — остаётся наведение курсором */ }
+    }
+
+    releaseLock() {
+        if (!document.pointerLockElement) return;
+        this.ourUnlock = true;
+        document.exitPointerLock();
+    }
+
+    /** Точка экрана, по которой наводится орудие: центр — при обзоре мышью, иначе курсор */
+    aimScreen() {
+        if (this.mouseLook()) return { x: innerWidth / 2, y: innerHeight / 2 };
+        return this.input.mouse;
+    }
+
+    updateLook(dt) {
+        const T = Config.CAMERA.TP;
+        const p = this.battle && this.battle.player;
+        const m = this.input.mouse;
+        // сглаженный переход между видами
+        this.camTs += clamp(this.camT - this.camTs, -dt * 2.2, dt * 2.2);
+        if (Math.abs(this.camT - this.camTs) < 1e-3) this.camTs = this.camT;
+        // вход в прицел и выход из него сохраняют точку прицеливания
+        const sightNow = this.sightOn();
+        if (sightNow !== !!this.wasSight) {
+            this.wasSight = sightNow;
+            this.retarget(sightNow);
+        }
+        if (this.mouseLook()) {
+            const sight = sightNow;
+            const k = T.SENS * Settings.get("lookSens") * (sight ? T.SIGHT_FOV[this.sightZoom] / T.FOV : 1);
+            this.look.yaw += m.dx * k;
+            const [lo, hi] = sight ? T.SIGHT_PITCH : [T.PITCH_MIN, T.PITCH_MAX];
+            this.look.pitch = clamp(this.look.pitch - m.dy * k, lo, hi);
+        } else if (p && !p.dead && this.camT > 0) {
+            // без захвата мыши — камера держится за кормой, наведение курсором
+            this.look.yaw += angDiff(this.look.yaw, p.a) * Math.min(1, dt * 2.5);
+            this.look.pitch += (T.PITCH - this.look.pitch) * Math.min(1, dt * 2);
+        }
+        m.dx = 0; m.dy = 0;
+        // после гибели и в меню — обратно в вид сверху без захвата мыши
+        if ((!p || p.dead) && this.camT > 0) this.setViewT(0);
+        if (!this.lookWanted()) this.releaseLock();
+    }
+
+    /** Повернуть взгляд так, чтобы из новой точки камеры центр экрана смотрел на прежнюю точку прицеливания */
+    retarget(sight) {
+        const T = Config.CAMERA.TP;
+        const p = this.battle && this.battle.player, a = this.aim.point;
+        if (!p || p.dead || !a) return;
+        const aimFrom = (c) => {
+            this.look.yaw = Math.atan2(a[2] - c[2], a[0] - c[0]);
+            this.look.pitch = Math.atan2(a[1] - c[1], Math.hypot(a[0] - c[0], a[2] - c[2]));
+        };
+        if (sight) {
+            aimFrom(hullToWorld(p, frameToHull(p, "gun", [0.25, 0.16, -0.32])));
+            this.look.pitch = clamp(this.look.pitch, T.SIGHT_PITCH[0], T.SIGHT_PITCH[1]);
+            return;
+        }
+        // камера вида сзади зависит от направления взгляда — несколько приближений
+        const d = p.def, P = [p.x, d.dims.H + d.turret.h + 0.9, p.z];
+        for (let i = 0; i < 4; i++) {
+            const cy = Math.cos(this.look.pitch), D = [cy * Math.cos(this.look.yaw), Math.sin(this.look.pitch), cy * Math.sin(this.look.yaw)];
+            aimFrom([P[0] - D[0] * this.tpDist, Math.max(1.1, P[1] - D[1] * this.tpDist + 0.7), P[2] - D[2] * this.tpDist]);
+        }
+        this.look.pitch = clamp(this.look.pitch, T.PITCH_MIN, T.PITCH_MAX);
+    }
+
+    /** Параметры камеры для вида сзади / прицела */
+    viewParams() {
+        const p = this.battle && this.battle.player;
+        if (!p || this.camTs <= 0) return null;
+        const d = p.def;
+        const view = {
+            t: this.camTs, yaw: this.look.yaw, pitch: this.look.pitch, dist: this.tpDist,
+            pivot: [p.x, d.dims.H + d.turret.h + 0.9, p.z], sight: null,
+        };
+        if (this.sightOn()) {
+            // прицел наводчика — слева от орудия, над осью цапф
+            const pos = hullToWorld(p, frameToHull(p, "gun", [0.25, 0.16, -0.32]));
+            view.sight = { pos, fov: Config.CAMERA.TP.SIGHT_FOV[this.sightZoom] };
+        }
+        return view;
     }
 
     updatePlayer(dt) {
@@ -410,7 +584,8 @@ export class Game {
         const b = this.battle, p = b && b.player;
         const aim = this.aim;
         if (!p || p.dead) { aim.point = null; aim.pen = null; aim.block = null; return; }
-        const m = this.input.mouse;
+        const m = this.aimScreen();
+        const tp = this.camTs > 0.5;
         const ray = this.scene3d.screenRay(m.x, m.y);
         let best = null;
         for (const v of b.vehicles) {
@@ -432,7 +607,8 @@ export class Game {
             else if (id === "hull") y = d.dims.H * 0.55;
             else if (id === "barrel") y = d.muzzleY;
             else y = Math.min(d.dims.H * 0.4, d.dims.th * 0.55);
-            aim.point = [best.hit.world[0], y, best.hit.world[2]];
+            // сверху луч камеры попадает в крышу — целимся в середину детали; сбоку — в точку под прицелом
+            aim.point = tp ? best.hit.world.slice() : [best.hit.world[0], y, best.hit.world[2]];
             aim.cursor = best.hit.world;
             aim.ground = null;
             aim.target = v;
@@ -441,7 +617,19 @@ export class Game {
         } else {
             const gp = this.scene3d.groundAt(m.x, m.y, 0);
             aim.target = null;
-            if (gp) {
+            if (tp) {
+                // вид сзади: прицел — первая преграда на луче камеры (здание, скала, обломки, грунт),
+                // выше горизонта — точка далеко на луче; невидимые машины не выдаём
+                const far = 700;
+                const hit = probeShot(b, p, ray.o, ray.d, 900);
+                const pt = hit && hit.kind !== "vehicle" ? hit.point
+                    : gp && Math.hypot(gp[0] - ray.o[0], gp[2] - ray.o[2]) < 900 ? gp
+                    : [ray.o[0] + ray.d[0] * far, ray.o[1] + ray.d[1] * far, ray.o[2] + ray.d[2] * far];
+                aim.point = pt;
+                aim.cursor = pt;
+                aim.ground = pt[1] < 0.5 ? pt : null;
+                aim.dist = Math.hypot(pt[0] - p.x, pt[2] - p.z);
+            } else if (gp) {
                 const dx = gp[0] - p.x, dz = gp[2] - p.z;
                 const dd = Math.hypot(dx, dz) || 1;
                 const ext = Math.max(dd, 70);
@@ -681,6 +869,7 @@ export class Game {
         const running = !this.paused && !this.screens.modalOpen;
         // онлайн-бой не ставится на паузу: реплика обновляется всегда
         const sdt = running || b.net ? dt : 0;
+        this.updateLook(dt);
         if (running) {
             this.computeAim(dt);
             this.updatePlayer(dt);
@@ -704,8 +893,8 @@ export class Game {
             const ally = b.vehicles.filter((v) => !v.dead && v.team === b.playerTeam && !v.static).sort((x, y) => y.stats.kills - x.stats.kills)[0];
             if (ally) this.focus = { x: this.focus.x + (ally.x - this.focus.x) * Math.min(1, dt * 2), z: this.focus.z + (ally.z - this.focus.z) * Math.min(1, dt * 2) };
         }
-        const binoc = this.input.mouse.right && running;
-        this.scene3d.updateCamera(dt, this.focus, aimForCam, binoc, this.zoomH);
+        const binoc = this.input.mouse.right && running && this.camTs < 0.5;
+        this.scene3d.updateCamera(dt, this.focus, aimForCam, binoc, this.zoomH, this.viewParams());
         this.scene3d.sync(sdt);
         this.scene3d.render();
         this.overlay.draw(this, sdt);

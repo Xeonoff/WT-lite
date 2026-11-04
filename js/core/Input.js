@@ -2,7 +2,8 @@
 export class Input {
     constructor() {
         this.keys = {};
-        this.mouse = { x: innerWidth / 2, y: innerHeight / 2, left: false, right: false, overUI: false };
+        this.mouse = { x: innerWidth / 2, y: innerHeight / 2, left: false, right: false, overUI: false, dx: 0, dy: 0 };
+        this.onDown = null;          // перехват нажатия (захват мыши в виде сзади)
         this.handlers = [];
         this.wheelHandlers = [];
         this.enabled = true;
@@ -18,13 +19,16 @@ export class Input {
         addEventListener("keyup", (e) => { this.keys[e.code] = false; });
         addEventListener("blur", () => { this.keys = {}; this.mouse.left = this.mouse.right = false; });
         addEventListener("mousemove", (e) => {
+            // при захвате мыши курсор стоит на месте — копим смещение для обзора
+            if (document.pointerLockElement) { this.mouse.dx += e.movementX; this.mouse.dy += e.movementY; return; }
             this.mouse.x = e.clientX;
             this.mouse.y = e.clientY;
             this.mouse.overUI = !!(e.target && e.target.closest && e.target.closest(".ui-block"));
         });
         addEventListener("mousedown", (e) => {
-            const ui = e.target && e.target.closest && e.target.closest(".ui-block, button, input, select, a");
+            const ui = !document.pointerLockElement && e.target && e.target.closest && e.target.closest(".ui-block, button, input, select, a");
             if (ui) return;
+            if (this.onDown && this.onDown(e)) return;
             if (e.button === 0) this.mouse.left = true;
             if (e.button === 2) this.mouse.right = true;
         });

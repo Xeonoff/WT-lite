@@ -99,6 +99,16 @@ export class Hangar {
 
     applyMode() {
         if (!this.vm) return;
+        const M = this.vm.model;
+        if (M) {
+            // детальная модель сама показывает модули и экипаж (броня полупрозрачная)
+            for (const m of this.vm.meshes) m.visible = true;
+            M.setMode(this.mode === "modules" ? "modules" : "exterior");
+            if (this.mode === "modules") {
+                if (this.armor) this.armor.root.visible = false;
+                return;
+            }
+        }
         const show = this.mode !== "model";
         if (show && !this.armor) {
             this.armor = buildArmorModel(this.def);
@@ -118,7 +128,7 @@ export class Hangar {
         if (this.vm) { this.stand.remove(this.vm.root); disposeVehicleMesh(this.vm); }
         if (this.armor) { this.armor.dispose(); this.armor = null; }
         const def = getVehicle(defId);
-        this.vm = buildVehicleMesh(def, biome);
+        this.vm = buildVehicleMesh(def, biome, { full: true });
         this.vm.root.position.x = -(Math.max(def.dims.L / 2, def.turret.x + def.turret.hl + def.gun.len) - def.dims.L / 2) * 0.35;
         this.stand.add(this.vm.root);
         this.def = def;

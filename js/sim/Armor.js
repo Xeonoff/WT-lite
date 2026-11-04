@@ -93,16 +93,16 @@ export function rayConvex(o, d, planes, tMax = Infinity) {
  */
 export function raycastVehicle(v, p0, dir, maxT, skip) {
     const o = worldToHull(v, p0), d = dirWorldToHull(v, dir);
-    let best = null;
+    let best = null, bestMain = null;
     for (const part of v.def.parts) {
         if (skip && skip.has(part.id)) continue;
         const o2 = part.frame === "hull" ? o : hullToFrame(v, part.frame, o);
         const d2 = part.frame === "hull" ? d : dirHullToFrame(v, part.frame, d);
-        let r, n, face;
+        let r, n, face, main = false;
         if (part.kind === "convex") {
             r = rayConvex(o2, d2, part.planes, maxT);
             if (!r || r.t0 < 0) continue;
-            n = r.plane.n; face = r.plane.face;
+            n = r.plane.n; face = r.plane.face; main = !!r.plane.main;
         } else {
             r = rayAabb(o2, d2, part.min, part.max, maxT);
             if (!r || r.t0 < 0) continue;
@@ -110,9 +110,13 @@ export function raycastVehicle(v, p0, dir, maxT, skip) {
             face = r.axis === 2 ? "side" : r.axis === 1 ? (r.sign > 0 ? "roof" : "bottom") : r.sign > 0 ? "front" : "rear";
             if (part.faceMap && part.faceMap[face]) face = part.faceMap[face];
         }
-        if (!best || r.t0 < best.t) best = { part, t: r.t0, tExit: r.t1, o: o2, d: d2, n, face };
+        const cand = { part, t: r.t0, tExit: r.t1, o: o2, d: d2, n, face, main, edge: part.kind === "convex" && !!r.plane.edge };
+        if (!best || r.t0 < best.t - 1e-5 || (r.t0 < best.t + 1e-5 && main && !best.main)) best = cand;
+        if (main && (!bestMain || r.t0 < bestMain.t)) bestMain = cand;
     }
     if (!best) return null;
+    // стык листов детальной модели: торец листа считается частью соседнего листа, если его грань рядом
+    if (best.edge && bestMain && bestMain.t - best.t < 0.1) best = bestMain;
     const pt = [best.o[0] + best.d[0] * best.t, best.o[1] + best.d[1] * best.t, best.o[2] + best.d[2] * best.t];
     return {
         part: best.part, id: best.part.id, frame: best.part.frame, t: best.t, tExit: best.tExit,
@@ -135,6 +139,9 @@ export function plateInfo(v, hit) {
         return { thick: hit.part.spaced, vslope: 0, name: hit.part.skirt ? "противокумулятивный экран" : "гусеница", spaced: true };
     }
     if (id === "barrel") return { thick: 25, vslope: 0, name: "ствол орудия", barrel: true };
+    // лист детальной модели: толщина и название — свои, наклон — в самой геометрии
+    const pl = hit.part.plate || (hit.part.plates && (hit.part.plates[hit.face] || hit.part.plates.side));
+    if (pl) return { thick: pl.mm, vslope: 0, name: pl.name, face: pl.zone, plate: true };
     let src, names;
     if (id === "hull") { src = A.hull; names = PLATE_NAMES.hull; }
     else { src = A.turret; names = v.def.turret.casemate ? PLATE_NAMES.casemate : PLATE_NAMES.turret; }

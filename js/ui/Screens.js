@@ -11,6 +11,10 @@ import { REFERENCE } from "./Reference.js";
 import { enhanceSelect } from "./Dropdown.js";
 import { ARMOR_SCALE } from "../render/ArmorView.js";
 import { defaultServerUrl, normalizeServerUrl } from "../net/NetClient.js";
+import { MODULE_CATEGORIES as KV1_CATEGORIES, CREW_ROLES as KV1_CREW } from "../data/models/KV1Spec.js";
+
+/** Легенда режима «Модули» для машин с детальной моделью */
+const DETAILED_LEGEND = { kv1: { cats: KV1_CATEGORIES, crew: KV1_CREW } };
 
 const TEAM_NATION = ["ussr", "germany"];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -201,6 +205,7 @@ export class Screens {
             return `<div class="lslot sm" data-act="hSel" data-v="${id}"><img src="${this.game.hangar.thumbnail(id)}" alt=""><b>${v.name}</b></div>`;
         }).join("");
         this.game.hangar.show(this.hangarSel);
+        if (this.hMode === "modules") this.setHangarMode("modules");
         d.lastVehicle[nation] = this.hangarSel;
     }
 
@@ -258,7 +263,11 @@ export class Screens {
                 <div class="ln">${[0, 30, 80, 150, max].map((t) => `<span>${t}${t === max ? "+" : ""}</span>`).join("")}</div>
                 <div class="lk" style="margin-top:6px"><span><i style="background:#5a6068"></i>гусеницы и экраны (разнесённая броня)</span></div>`;
         } else if (mode === "modules") {
-            const keys = [["#ff4d3d", "боеукладка"], ["#ff9a2e", "топливо"], ["#9aa7b4", "двигатель и трансмиссия"], ["#c9b07a", "орудие"], ["#59b4ff", "экипаж"]];
+            const def = this.game.hangar.def;
+            const D = def && DETAILED_LEGEND[def.detailed];
+            const keys = D
+                ? [...Object.values(D.cats).filter((c) => c.name !== "Торсионы подвески").map((c) => [c.color, c.name.toLowerCase()]), ["#d8413a", "экипаж — по должностям"]]
+                : [["#ff4d3d", "боеукладка"], ["#ff9a2e", "топливо"], ["#9aa7b4", "двигатель и трансмиссия"], ["#c9b07a", "орудие"], ["#59b4ff", "экипаж"]];
             lg.innerHTML = `<div class="lt">Модули и экипаж</div><div class="lk">${keys.map(([c, n]) => `<span><i style="background:${c}"></i>${n}</span>`).join("")}</div>`;
         }
         if (mode === "model") this.armorTip(null);
@@ -541,6 +550,7 @@ export class Screens {
             <div class="sgrp"><h4>ГРАФИКА И КАМЕРА</h4>
                 ${select("quality", "Качество", [["high", "Высокое"], ["medium", "Среднее"], ["low", "Низкое"]])}
                 ${slider("tilt", "Наклон камеры", 0, 35, 1, (v) => v + "°")}
+                ${slider("lookSens", "Мышь в виде сзади", 0.3, 2.5, 0.05, (v) => Math.round(v * 100) + "%")}
                 ${toggle("showFps", "Показывать FPS")}
             </div>
             <div class="sgrp"><h4>ИГРА</h4>
