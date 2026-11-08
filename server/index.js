@@ -98,6 +98,9 @@ function onMessage(c, msg) {
         case "hello":
             if (msg.v !== PROTO_VERSION) { c.send({ t: "error", text: "Версия клиента не совпадает с сервером — обновите страницу" }); return; }
             c.name = cleanName(msg.name);
+            // ключ игрока из браузера: по нему возвращаем в бой прежнего пилота после выхода/переподключения
+            c.key = typeof msg.token === "string" && /^[\w-]{8,64}$/.test(msg.token) ? msg.token : c.id;
+            c.lineups = msg.lineups && typeof msg.lineups === "object" ? msg.lineups : {};
             c.hello = true;
             c.send({ t: "welcome", id: c.id, name: c.name, rooms: roomList() });
             break;
@@ -125,6 +128,7 @@ function onMessage(c, msg) {
         case "leaveRoom": if (r) { r.remove(c); c.send({ t: "rooms", rooms: roomList() }); pushRooms(); } break;
         case "team": if (r) r.setTeam(c, msg.team); break;
         case "lineup": if (r) r.setLineup(c, msg.ids); break;
+        case "lineups": if (msg.lineups && typeof msg.lineups === "object") c.lineups = msg.lineups; break;
         case "ready": if (r) r.setReady(c, msg.v); break;
         case "settings": if (r && r.hostId === c.id && r.state === "lobby") { r.applySettings(msg); r.pushView(); pushRooms(); } break;
         case "start": if (r) { const err = r.start(c); if (err) c.send({ t: "error", text: err }); pushRooms(); } break;

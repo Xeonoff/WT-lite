@@ -4,7 +4,7 @@
  */
 import { SHELLS } from "../data/Shells.js";
 
-export const PROTO_VERSION = 1;
+export const PROTO_VERSION = 2;
 export const TICK_HZ = 30;          // шаг симуляции на сервере
 export const SNAP_EVERY = 2;        // снимок состояния — каждый второй шаг (15 Гц)
 export const SNAP_HZ = TICK_HZ / SNAP_EVERY;
@@ -32,7 +32,7 @@ export function packVehicle(v, viewTeam) {
     if (v.visible[1 - v.team]) f |= F_SPOTTED;
     if (v.repair) f |= F_REPAIR;
     if (v.mods.engine.hp < v.mods.engine.maxHp * 0.35) f |= F_SMOKE;
-    return [v.id, r2(v.x), r2(v.z), r3(v.a), r2(v.v), r3(v.w), r3(v.tr), f, v.input.throttle, v.input.steer];
+    return [v.id, r2(v.x), r2(v.z), r3(v.a), r2(v.v), r3(v.w), r3(v.tr), f, v.input.throttle, v.input.steer, r3(v.gp)];
 }
 
 /** Полное внутреннее состояние своей машины (для HUD: экипаж, модули, БК, перезарядка) */

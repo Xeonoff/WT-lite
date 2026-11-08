@@ -39,7 +39,8 @@ export class NetClient {
         }
     }
 
-    connect(url, name) {
+    /** extra — дополнительные поля приветствия (ключ игрока, сетапы наций) */
+    connect(url, name, extra = {}) {
         this.close();
         return new Promise((resolve, reject) => {
             let ws;
@@ -48,7 +49,7 @@ export class NetClient {
             let settled = false;
             const fail = (msg) => { if (!settled) { settled = true; reject(new Error(msg)); } };
             const timer = setTimeout(() => { fail("сервер не отвечает"); ws.close(); }, 12000);
-            ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name, v: PROTO_VERSION }));
+            ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name, v: PROTO_VERSION, ...extra }));
             ws.onmessage = (ev) => {
                 let m;
                 try { m = JSON.parse(ev.data); } catch { return; }

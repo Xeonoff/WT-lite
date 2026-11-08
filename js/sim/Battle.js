@@ -1,6 +1,6 @@
 import { Config } from "../core/Config.js";
 import { Events } from "../core/Events.js";
-import { rnd, clamp, angDiff, TAU } from "../core/Utils.js";
+import { rnd, clamp, angDiff, TAU, DEG } from "../core/Utils.js";
 import { SHELLS } from "../data/Shells.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { WEATHER, BIOME_WEATHER } from "../data/Maps.js";
@@ -14,6 +14,7 @@ import { fireTick } from "./Damage.js";
 import { DominationMode } from "./modes/Domination.js";
 import { WavesMode } from "./modes/Waves.js";
 import { RangeMode } from "./modes/Range.js";
+import { DuelMode } from "./modes/Duel.js";
 
 const CALLSIGNS = [
     ["Сокол", "Беркут", "Ястреб", "Кречет", "Орлан", "Сапсан"],
@@ -65,6 +66,7 @@ export class Battle {
         if (opts.replica) return;
         if (this.mode === "domination") this.modeCtl = new DominationMode(this);
         else if (this.mode === "waves") this.modeCtl = new WavesMode(this);
+        else if (this.mode === "duel") this.modeCtl = new DuelMode(this);
         else this.modeCtl = new RangeMode(this);
         this.modeCtl.start();
     }
@@ -124,7 +126,10 @@ export class Battle {
         return { x: sp.x + rnd(-sp.spread, sp.spread), z: sp.z + rnd(-6, 6), a: sp.a };
     }
 
-    spawnCost(id, P = this.local) { return P.spawns === 0 ? 0 : getVehicle(id).spCost; }
+    spawnCost(id, P = this.local) {
+        if (this.modeCtl && this.modeCtl.freeSpawns) return 0;
+        return P.spawns === 0 ? 0 : getVehicle(id).spCost;
+    }
 
     canSpawn(id, P = this.local) {
         const e = P.lineup.find((l) => l.id === id);
@@ -218,37 +223,38 @@ export class Battle {
         v.tr += step;
         if (!T.casemate) v.tr = angDiff(0, v.tr);
         v.trRate = step / Math.max(dt, 1e-4);
+        // вертикальная наводка: ось ствола на точку прицеливания, в пределах УНН/УВН
+        const er = v.elevRate();
+        const dp = clamp(this.wantPitch(v) - v.gp, -er * dt, er * dt);
+        v.gp += dp;
     }
 
-    /**
-     * Линия выстрела без рассеивания: курс — по фактическому положению ствола,
-     * угол места — на точку прицеливания (с ограничением)
-     */
+    /** Нужный угол возвышения орудия (в пределах его углов наводки), рад */
+    wantPitch(v) {
+        const E = v.def.gun.elev;
+        if (!v.aimPoint) return clamp(0, E[0] * DEG, E[1] * DEG);
+        const piv = gunPivotWorld(v);
+        const dx = v.aimPoint[0] - piv[0], dz = v.aimPoint[2] - piv[2];
+        const want = Math.atan2(v.aimPoint[1] - piv[1], Math.max(3, Math.hypot(dx, dz)));
+        return clamp(want, E[0] * DEG, E[1] * DEG);
+    }
+
+    /** Линия выстрела — фактическая ось ствола: курс башни/орудия и угол возвышения */
     fireLine(v) {
         const m = muzzleWorld(v);
         const yaw = v.gunYaw();
-        let pitch = 0;
-        if (v.aimPoint) {
-            const dx = v.aimPoint[0] - m[0], dz = v.aimPoint[2] - m[2];
-            const hd = Math.max(12, Math.hypot(dx, dz));
-            pitch = clamp(Math.atan2(v.aimPoint[1] - m[1], hd), -0.12, 0.2);
-        }
+        const pitch = v.gp;
         const dir = [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
         return { m, yaw, pitch, dir };
     }
 
-    /** Выстрел: линия ствола + рассеивание */
+    /** Выстрел строго по оси ствола */
     fire(v) {
         if (!v.canFire()) return false;
         const sid = v.consumeShot();
         if (!sid) return false;
         const def = SHELLS[sid];
-        let { m, yaw, pitch } = this.fireLine(v);
-        const disp = v.dispersion();
-        const r = disp * Math.sqrt(Math.random()), ph = Math.random() * TAU;
-        yaw += Math.cos(ph) * r;
-        pitch += Math.sin(ph) * r * 0.7;
-        const dir = [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
+        const { m, dir } = this.fireLine(v);
         this.shots.push(new Shot(v, def, m, dir));
         v.lastShot = this.time;
         v.bloom += def.cal >= 40 ? 1.6 : 0.35;
@@ -270,6 +276,12 @@ export class Battle {
         const left = this.artyLeft(v);
         if (left > 0) return { ok: false, reason: "перезарядка " + Math.ceil(left) + " с" };
         if (Math.hypot(x - v.x, z - v.z) > A.RANGE) return { ok: false, reason: "слишком далеко" };
+        if (!v.pilot) {
+            // ботам — один удар на команду за раз и общий перерыв (десятки разрывов разом тормозили игру)
+            this.botArtyT = this.botArtyT || [0, 0];
+            if (this.time < this.botArtyT[v.team] || this.strikes.some((s) => s.team === v.team && !s.done)) return { ok: false, reason: "занято" };
+            this.botArtyT[v.team] = this.time + A.BOT_TEAM_GAP;
+        }
         const S = this.world.S;
         x = clamp(x, 4, S - 4); z = clamp(z, 4, S - 4);
         v.artyT = this.time + (this.mode === "range" ? 5 : A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT));
@@ -406,7 +418,7 @@ export class Battle {
         for (const P of this.pilots) if (P.team === winner) P.stats.rp = Math.round(P.stats.rp * Config.RP.WIN_MULT);
         const L = this.local;
         this.result = {
-            win: L ? winner === L.team : false, winner, reason, mode: this.mode,
+            win: L ? winner === L.team : false, draw: winner === -1, winner, reason, mode: this.mode,
             stats: L ? { ...L.stats } : null,
             pilots: this.pilots.map((P) => ({ id: P.id, name: P.name, team: P.team, stats: { ...P.stats }, vstats: P.vstats })),
         };

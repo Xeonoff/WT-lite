@@ -167,5 +167,11 @@ export class DominationMode {
     hud() {
         return { kind: "domination", tickets: this.tickets, points: this.points, time: this.timeLeft, max: Config.DOMINATION.TICKETS };
     }
+
+    /** Состояние режима для снимка онлайн-боя */
+    netState() {
+        const r2 = (x) => Math.round(x * 100) / 100;
+        return { k: "dom", tk: this.tickets.map(r2), tl: r2(this.timeLeft), p: this.points.map((p) => [p.owner, r2(p.prog), p.n[0], p.n[1]]) };
+    }
 }
 

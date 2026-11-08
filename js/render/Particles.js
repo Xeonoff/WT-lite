@@ -198,19 +198,20 @@ export class Particles {
         }
     }
 
-    explosion(p, size, ground, dust) {
+    explosion(p, size, ground, dust, lod = 1) {
         const k = size;
+        const count = (n) => this.count(n * lod);
         this.add.emit({ x: p[0], y: p[1] + 0.3, z: p[2], life: 0.14, s0: 3 * k, s1: 7 * k, c0: [1, 0.9, 0.6, 1], c1: [1, 0.55, 0.2, 0] });
-        for (let i = 0; i < this.count(18 * k); i++) {
+        for (let i = 0; i < count(18 * k); i++) {
             const a = rnd(TAU), up = rnd(0.2, 1), sp = rnd(4, 14) * k;
             this.add.emit({ x: p[0], y: p[1] + 0.3, z: p[2], vx: Math.cos(a) * sp, vy: up * sp, vz: Math.sin(a) * sp, life: rnd(0.25, 0.6), s0: rnd(1, 2.2) * k, s1: rnd(0.3, 1) * k, c0: [1, 0.68, 0.25, 0.95], c1: [0.9, 0.2, 0.05, 0], drag: 3.5 });
         }
-        for (let i = 0; i < this.count(22 * k); i++) {
+        for (let i = 0; i < count(22 * k); i++) {
             const a = rnd(TAU), sp = rnd(1, 7) * k;
             const col = ground ? dust : [0.18, 0.17, 0.15];
             this.norm.emit({ x: p[0] + rnd(-0.5, 0.5), y: p[1] + rnd(0, 1), z: p[2] + rnd(-0.5, 0.5), vx: Math.cos(a) * sp, vy: rnd(1, 5) * k, vz: Math.sin(a) * sp, life: rnd(1.6, 3.4), s0: rnd(1.2, 2.2) * k, s1: rnd(4, 7) * k, c0: [...col, 0.7], c1: [col[0] * 1.2, col[1] * 1.2, col[2] * 1.2, 0], drag: 1.4, vr: rnd(-0.6, 0.6) });
         }
-        for (let i = 0; i < this.count(14 * k); i++) {
+        for (let i = 0; i < count(14 * k); i++) {
             const a = rnd(TAU), sp = rnd(5, 16);
             this.norm.emit({ x: p[0], y: p[1] + 0.3, z: p[2], vx: Math.cos(a) * sp, vy: rnd(4, 12), vz: Math.sin(a) * sp, life: rnd(1, 2), s0: rnd(0.15, 0.35), c0: [0.12, 0.11, 0.09, 1], c1: [0.12, 0.11, 0.09, 0.8], grav: 14, drag: 0.4, bounce: true, vr: rnd(-12, 12) });
         }

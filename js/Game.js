@@ -6,6 +6,7 @@ import { Input } from "./core/Input.js";
 import { $, clamp, angDiff } from "./core/Utils.js";
 import { SHELLS } from "./data/Shells.js";
 import { CREW_SEATS } from "./data/Vehicles.js";
+import { MODES } from "./data/Maps.js";
 import { getVehicle, vehiclesOf } from "./data/VehicleBuild.js";
 import { Battle } from "./sim/Battle.js";
 import { raycastVehicle, traceShot, muzzleWorld, frameToHull, hullToWorld } from "./sim/Armor.js";
@@ -54,6 +55,7 @@ export class Game {
         this.lastXray = null;
         this.deathT = 0;
         this.focus = { x: 0, z: 0 };
+        this.spec = null;           // наблюдение за союзником: { v, lostT }
         this.thumbQueue = [];
         this.bindNet();
         this.bindChat();
@@ -107,7 +109,7 @@ export class Game {
                 if (opts.mode === "range" && first) this.spawn(first);
                 else this.screens.openSpawn({ title: "ВЫБОР ТЕХНИКИ" });
                 const m = this.battle.world.map;
-                this.hud.banner(opts.mode === "range" ? "ПОЛИГОН" : m.name.toUpperCase(), opts.mode === "range" ? "испытание техники" : this.battle.weather.name.toLowerCase() + " · " + (opts.mode === "domination" ? "превосходство" : "оборона рубежа"));
+                this.hud.banner(opts.mode === "range" ? "ПОЛИГОН" : m.name.toUpperCase(), opts.mode === "range" ? "испытание техники" : this.battle.weather.name.toLowerCase() + " · " + MODES[opts.mode].name.toLowerCase());
                 if (this.battle.weather.spotK < 0.8) setTimeout(() => this.hud.log(`${this.battle.weather.name}: дальность обнаружения снижена до ~${Math.round(Config.SPOT.RANGE * this.battle.weather.spotK)} м`, "tip", 7000), 1200);
             } catch (e) {
                 console.error(e);
@@ -135,6 +137,7 @@ export class Game {
     afterSpawn(v) {
         const b = this.battle;
         const id = v.def.id;
+        this.stopSpectate(false);
         this.screens.closeSpawn();
         this.hud.build(b);
         this.focus = { x: v.x, z: v.z };
@@ -184,6 +187,7 @@ export class Game {
     }
 
     endBattleCleanup() {
+        this.stopSpectate(false);
         this.audio.stopEngines();
         this.scene3d.unloadBattle();
         this.battle = null;
@@ -222,6 +226,7 @@ export class Game {
                 next = cand.name + (left > 0 ? " — ещё " + left + " ОИ" : " — можно исследовать в ангаре!");
             }
         }
+        this.stopSpectate(false);
         this.screens.closeSpawn();
         this.screens.showResults(r, { nation: b.nation, next, online: !!b.net });
     }
@@ -266,7 +271,7 @@ export class Game {
             document.body.classList.add("inBattle");
             if (b.player && !b.player.dead) this.afterSpawn(b.player);
             else this.screens.openSpawn({ title: "ВЫБОР ТЕХНИКИ" });
-            this.hud.banner(b.world.map.name.toUpperCase(), "онлайн · " + b.weather.name.toLowerCase() + " · превосходство");
+            this.hud.banner(b.world.map.name.toUpperCase(), "онлайн · " + b.weather.name.toLowerCase() + " · " + (MODES[b.mode] || MODES.domination).name.toLowerCase());
             this.hud.log("Онлайн-бой: Enter — чат, Esc — меню (бой не останавливается)", "tip", 7000);
         } catch (e) {
             console.error(e);
@@ -323,13 +328,14 @@ export class Game {
             if (this.screens.closeModal()) return;
             if (this.state === "battle") {
                 if (this.battle && this.battle.ended) return;
+                if (this.spec) { this.stopSpectate(true); return; }
                 if (!$("spawnScr").classList.contains("hidden")) {
                     const p = this.battle.player;
                     if (p && !p.dead) this.screens.closeSpawn();
                     return;
                 }
                 this.paused ? this.resume() : this.pause();
-            } else if (this.screens.current === "hangarScr") this.screens.show("menu");
+            } else if (this.screens.current === "hangarScr") this.screens.hangarBack();
         });
         I.on("KeyM", () => { const m = this.audio.toggleMute(); this.hud.log(m ? "Звук выключен" : "Звук включён"); });
         I.on("KeyH", () => { this.hintsOff = !this.hintsOff; this.applyHints(); });
@@ -384,7 +390,7 @@ export class Game {
             } else this.zoomStep(dy < 0 ? 1 : -1);
         });
         I.on("KeyV", () => {
-            if (!player()) return;
+            if (!player() && !(this.spec && inBattle())) return;
             this.setViewT(this.camT >= 1 ? 0 : 1);
             if (this.camT === 0 && this.zoomH < Config.CAMERA.MIN_H + 1) this.zoomH = Config.CAMERA.MIN_H;
         });
@@ -395,10 +401,10 @@ export class Game {
     zoomStep(dir) {
         const C = Config.CAMERA, T = C.TP;
         if (this.sightOn()) { this.sightZoom = dir > 0 ? 1 : 0; return; }
-        const p = this.battle && this.battle.player;
+        const s = this.camSubject();
         if (dir > 0) {
             if (this.zoomH > C.MIN_H + 0.5) this.zoomH = Math.max(C.MIN_H, this.zoomH * 0.9);
-            else if (this.camT < 1 && p && !p.dead) this.setViewT(Math.min(1, this.camT + T.STEP));
+            else if (this.camT < 1 && s) this.setViewT(Math.min(1, this.camT + T.STEP));
             else if (this.camT >= 1) this.tpDist = Math.max(T.MIN_DIST, this.tpDist * 0.86);
         } else {
             if (this.camT >= 1 && this.tpDist < T.DIST - 0.01) this.tpDist = Math.min(T.DIST, this.tpDist / 0.86);
@@ -408,16 +414,16 @@ export class Game {
     }
 
     setViewT(t) {
-        const p = this.battle && this.battle.player;
-        if (this.camT === 0 && t > 0 && p) {
-            // камера разворачивается за корму машины
-            this.look.yaw = p.a;
+        const s = this.camSubject();
+        if (this.camT === 0 && t > 0 && s) {
+            // камера разворачивается за корму машины (при наблюдении — за орудие)
+            this.look.yaw = this.spec ? s.gunYaw() : s.a;
             this.look.pitch = Config.CAMERA.TP.PITCH;
         }
         if (t < 1e-6) t = 0;
         if (t > 1 - 1e-6) t = 1;
         this.camT = t;
-        if (t >= 1) this.requestLock();
+        if (t >= 1 && !this.spec) this.requestLock();
         else { this.sightToggle = false; this.releaseLock(); }
     }
 
@@ -439,6 +445,11 @@ export class Game {
         });
         // первое нажатие в виде сзади без захвата только захватывает мышь (кроме ПКМ — прицел)
         this.input.onDown = (e) => {
+            // наблюдение: ЛКМ / ПКМ — следующий / предыдущий союзник
+            if (this.spec && this.state === "battle" && !this.paused && !this.screens.modalOpen) {
+                if (e.button === 0 || e.button === 2) this.specCycle(e.button === 0 ? 1 : -1);
+                return true;
+            }
             if (!this.lookWanted() || document.pointerLockElement === gl) return false;
             this.requestLock();
             return e.button === 0;
@@ -481,7 +492,7 @@ export class Game {
 
     updateLook(dt) {
         const T = Config.CAMERA.TP;
-        const p = this.battle && this.battle.player;
+        const s = this.camSubject();
         const m = this.input.mouse;
         // сглаженный переход между видами
         this.camTs += clamp(this.camT - this.camTs, -dt * 2.2, dt * 2.2);
@@ -498,14 +509,14 @@ export class Game {
             this.look.yaw += m.dx * k;
             const [lo, hi] = sight ? T.SIGHT_PITCH : [T.PITCH_MIN, T.PITCH_MAX];
             this.look.pitch = clamp(this.look.pitch - m.dy * k, lo, hi);
-        } else if (p && !p.dead && this.camT > 0) {
-            // без захвата мыши — камера держится за кормой, наведение курсором
-            this.look.yaw += angDiff(this.look.yaw, p.a) * Math.min(1, dt * 2.5);
+        } else if (s && this.camT > 0) {
+            // без захвата мыши — камера держится за кормой, наведение курсором; при наблюдении — за орудием союзника
+            this.look.yaw += angDiff(this.look.yaw, this.spec ? s.gunYaw() : s.a) * Math.min(1, dt * 2.5);
             this.look.pitch += (T.PITCH - this.look.pitch) * Math.min(1, dt * 2);
         }
         m.dx = 0; m.dy = 0;
         // после гибели и в меню — обратно в вид сверху без захвата мыши
-        if ((!p || p.dead) && this.camT > 0) this.setViewT(0);
+        if (!s && this.camT > 0) this.setViewT(0);
         if (!this.lookWanted()) this.releaseLock();
     }
 
@@ -532,9 +543,86 @@ export class Game {
         this.look.pitch = clamp(this.look.pitch, T.PITCH_MIN, T.PITCH_MAX);
     }
 
+    /** Машина, за которой идёт камера: своя живая или та, за которой наблюдаем */
+    camSubject() {
+        const b = this.battle;
+        if (!b) return null;
+        if (this.spec) return this.spec.v;
+        return b.player && !b.player.dead ? b.player : null;
+    }
+
+    /* ─────────── Наблюдение за боем ─────────── */
+    /** Союзники в бою, за которыми можно наблюдать */
+    specList() {
+        const b = this.battle;
+        if (!b) return [];
+        return b.vehicles.filter((v) => !v.dead && !v.static && v.team === b.playerTeam && v !== b.player);
+    }
+
+    startSpectate() {
+        const b = this.battle;
+        if (!b || b.ended) return;
+        const list = this.specList();
+        if (!list.length) { this.hud.log("Наблюдать не за кем — союзников в бою нет", "warn"); this.audio.ui("bad"); return; }
+        this.spec = { v: null, lostT: 0, ox: 0, oz: 0 };
+        this.specSet(list.slice().sort((x, y) => y.stats.kills - x.stats.kills)[0]);
+        this.screens.closeSpawn();
+        $("specBar").classList.remove("hidden");
+    }
+
+    /** Новая цель наблюдения: камера плавно перелетает к ней (смещение гаснет), дальше держит без отставания */
+    specSet(v) {
+        const s = this.spec;
+        s.v = v;
+        s.lostT = 0;
+        s.ox = this.focus.x - v.x;
+        s.oz = this.focus.z - v.z;
+        this.specShow();
+    }
+
+    /** toSpawn — вернуться к выбору техники */
+    stopSpectate(toSpawn) {
+        if (!this.spec) return;
+        this.spec = null;
+        $("specBar").classList.add("hidden");
+        if (this.camT > 0) this.setViewT(0);
+        const b = this.battle;
+        if (toSpawn && b && !b.ended && (!b.player || b.player.dead)) this.screens.openSpawn({ title: "ВЫБОР ТЕХНИКИ" });
+    }
+
+    specCycle(dir) {
+        const list = this.specList();
+        if (!this.spec || !list.length) return;
+        const i = list.indexOf(this.spec.v);
+        this.specSet(i < 0 ? list[0] : list[(i + dir + list.length) % list.length]);
+        if (this.camT > 0) { this.look.yaw = this.spec.v.gunYaw(); this.look.pitch = Config.CAMERA.TP.PITCH; }
+        this.audio.ui("click");
+    }
+
+    specShow() {
+        const v = this.spec.v, w = $("specWho");
+        w.textContent = v.callsign + " ";
+        const i = document.createElement("i");
+        i.textContent = v.def.name + (v.dead ? " · уничтожен" : " · уничтожено: " + v.stats.kills);
+        w.append(i);
+    }
+
+    /** Цель наблюдения погибла — через пару секунд переходим к другому союзнику */
+    updateSpectate(dt) {
+        const s = this.spec, b = this.battle;
+        if (!s) return;
+        if (!s.v.dead && b.vehicles.includes(s.v)) return;
+        if (s.lostT === 0) this.specShow();
+        s.lostT += dt;
+        if (s.lostT < 2.5) return;
+        const list = this.specList();
+        if (list.length) this.specSet(list.slice().sort((x, y) => y.stats.kills - x.stats.kills)[0]);
+        else s.lostT = 2.5;
+    }
+
     /** Параметры камеры для вида сзади / прицела */
     viewParams() {
-        const p = this.battle && this.battle.player;
+        const p = this.camSubject() || (this.battle && this.battle.player);
         if (!p || this.camTs <= 0) return null;
         const d = p.def;
         const view = {
@@ -680,7 +768,7 @@ export class Game {
         const dx = aim.point[0] - mz[0], dz = aim.point[2] - mz[2];
         const hd = Math.hypot(dx, dz);
         if (hd < 6) return null;
-        const pitch = clamp(Math.atan2(aim.point[1] - mz[1], Math.max(12, hd)), -0.12, 0.2);
+        const pitch = this.battle.wantPitch(p);
         const dir = [Math.cos(pitch) * dx / hd, Math.sin(pitch), Math.cos(pitch) * dz / hd];
         const want = Math.hypot(goal[0] - mz[0], goal[2] - mz[2]) / Math.cos(pitch);
         const hit = probeShot(this.battle, p, mz, dir, want + 3);
@@ -821,7 +909,7 @@ export class Game {
         Events.on("waveClear", (e) => { this.hud.banner("ВОЛНА " + e.n + " ОТБИТА", "полевой ремонт и пополнение"); this.audio.ui("good"); });
         Events.on("playerSpawn", (e) => { const b = B(); if (b && b.net && e.v === b.player) this.afterSpawn(e.v); });
         Events.on("battleEnd", (r) => {
-            this.hud.banner(r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ", r.reason, r.win ? "win" : "lose");
+            this.hud.banner(r.draw ? "НИЧЬЯ" : r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ", r.reason, r.draw ? "" : r.win ? "win" : "lose");
             this.audio.ui(r.win ? "good" : "bad");
             setTimeout(() => { if (this.battle && this.battle.result === r) this.finishBattle(r); }, 3200);
         });
@@ -880,9 +968,14 @@ export class Game {
             b.update(dt);
         }
         const p = b.player;
+        this.updateSpectate(dt);
         // фокус камеры
         let aimForCam = null;
-        if (p && !p.dead) {
+        if (this.spec) {
+            const s = this.spec, k = Math.exp(-dt * 4);
+            s.ox *= k; s.oz *= k;
+            this.focus = { x: s.v.x + s.ox, z: s.v.z + s.oz };
+        } else if (p && !p.dead) {
             this.focus = { x: p.x, z: p.z };
             aimForCam = this.aim.ground || this.aim.point;
             if (this.aim.target && this.aim.point) aimForCam = this.aim.point;
@@ -913,7 +1006,7 @@ export class Game {
             if (this.spawnRefresh <= 0) { this.spawnRefresh = 0.5; this.screens.renderSpawn(); }
         }
         // экран возрождения после гибели
-        if (running && !b.ended && (!p || p.dead) && p && b.time - this.deathT > 3.6 && $("spawnScr").classList.contains("hidden")) {
+        if (running && !b.ended && !this.spec && (!p || p.dead) && p && b.time - this.deathT > 3.6 && $("spawnScr").classList.contains("hidden")) {
             const killer = this.deathKiller;
             this.screens.openSpawn({
                 title: "МАШИНА УНИЧТОЖЕНА", dead: true,

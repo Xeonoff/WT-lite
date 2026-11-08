@@ -160,6 +160,7 @@ export class Scene3D {
             vm.ring.visible = seen && !v.dead && !(this.hideOwn && v.isPlayer);
             if (vm.loose !== vm.turret) vm.turret.rotation.y = -v.turretRel();
             vm.gun.rotation.y = -v.gunRel();
+            if (vm.setGunPitch) vm.setGunPitch(v.gp || 0);
             // откат ствола
             if (v.recoil > 0) { vm.recoil = 1; v.recoil = 0; }
             vm.recoil = Math.max(0, vm.recoil - dt * 3.2);
@@ -221,12 +222,12 @@ export class Scene3D {
                 this.particles.norm.emit({ x: c.x + rnd(-hw, hw), y: rnd(14, 34), z: c.z + rnd(-hd, hd), vx: rnd(1, 2.5), vy: rnd(-7, -5), vz: rnd(-0.5, 0.5), life: 4.5, s0: rnd(0.3, 0.55), c0: [1, 1, 1, 0.85], c1: [1, 1, 1, 0.7], drag: 0 });
             }
         } else if (kind === "dust") {
-            const n = Math.round(48 * q * dt + Math.random());
+            const n = Math.round(26 * q * dt + Math.random());
             for (let i = 0; i < n; i++) {
-                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.4, hw * 0.6), y: rnd(2, 9), z: c.z + rnd(-hd, hd), vx: rnd(10, 16), vy: rnd(-0.3, 0.6), vz: rnd(-1.5, 1.5), life: rnd(3, 5), s0: rnd(6, 10), s1: rnd(14, 22), c0: [0.93, 0.84, 0.66, 0.36], c1: [0.95, 0.88, 0.72, 0], drag: 0, vr: rnd(-0.3, 0.3) });
+                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.4, hw * 0.6), y: rnd(2, 9), z: c.z + rnd(-hd, hd), vx: rnd(10, 16), vy: rnd(-0.3, 0.6), vz: rnd(-1.5, 1.5), life: rnd(3, 5), s0: rnd(6, 10), s1: rnd(14, 22), c0: [0.93, 0.84, 0.66, 0.2], c1: [0.95, 0.88, 0.72, 0], drag: 0, vr: rnd(-0.3, 0.3) });
             }
             // песчинки
-            const m = Math.round(120 * q * dt + Math.random());
+            const m = Math.round(80 * q * dt + Math.random());
             for (let i = 0; i < m; i++) {
                 this.particles.norm.emit({ x: c.x + rnd(-hw * 1.2, hw), y: rnd(0.5, 5), z: c.z + rnd(-hd, hd), vx: rnd(18, 26), vy: rnd(-0.5, 0.5), vz: rnd(-1, 1), life: rnd(1.5, 2.5), s0: rnd(0.2, 0.4), c0: [0.6, 0.5, 0.34, 0.8], c1: [0.6, 0.5, 0.34, 0], drag: 0 });
             }
@@ -292,9 +293,14 @@ export class Scene3D {
                 this.effects.flash(p, 0xff9a40, 6 * e.size, 0.15, 18);
                 return;
             }
-            this.particles.explosion(p, e.size, e.ground !== false && e.y < 1, this.dust);
-            this.effects.flash(p, 0xff9a40, 10 * e.size, 0.25, 22 + e.size * 10);
             if (e.y < 1.2) this.effects.crater(e.x, e.z, 0.8 + e.size * 1.1);
+            const [sx, sy, front] = this.project(e.x, e.y, e.z);
+            const m = 160;
+            if (!front || sx < -m || sy < -m || sx > this.w + m || sy > this.h + m) return;
+            const dist = Math.hypot(e.x - this.camera.position.x, e.y - this.camera.position.y, e.z - this.camera.position.z);
+            const lod = clamp(1.15 - dist / 260, 0.25, 1);
+            this.particles.explosion(p, Math.min(e.size, 1.8), e.ground !== false && e.y < 1, this.dust, lod);
+            this.effects.flash(p, 0xff9a40, 10 * e.size, 0.25, 22 + e.size * 10);
             const d = near(e.x, e.z);
             if (d < 60) this.cam.shake = Math.max(this.cam.shake, (1 - d / 60) * e.size * 0.8);
         });

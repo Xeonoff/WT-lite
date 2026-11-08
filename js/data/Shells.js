@@ -153,13 +153,15 @@ export function blastParams(s) {
             len: 2.3,
         };
     }
-    // ОФ
+    // ОФ: внутренний подрыв растёт с массой ВВ, но для крупных калибров ограничен (≈2 кг),
+    // иначе 122–152-мм фугасы уничтожают почти любую машину одним попаданием
+    const k = Math.min(kg, 2);
     return {
-        n: Math.round(14 + Math.pow(kg, 0.5) * 26),
-        dmg: 40 + Math.pow(kg, 0.5) * 30,
-        radius: 0.6 + Math.pow(kg, 0.45) * 1.1,
-        blastDmg: 150 + kg * 70,
-        len: 2.8,
+        n: Math.round(14 + Math.pow(k, 0.5) * 24),
+        dmg: 38 + Math.pow(k, 0.5) * 24,
+        radius: 0.6 + Math.pow(k, 0.45) * 0.9,
+        blastDmg: 140 + k * 55,
+        len: 2.6,
         splash: 1.6 + Math.pow(kg, 0.4) * 2.4,   // радиус наружного фугасного действия, м
     };
 }

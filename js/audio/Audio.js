@@ -435,14 +435,22 @@ export class AudioSys {
 
     explosion(x, z, size) {
         if (!AC) return;
+        const d = Math.hypot(x - this.lx, z - this.lz);
+        if (d > 420) return;
+        // не больше нескольких разрывов за 0,3 с (артналёт), ближние важнее
+        const now = AC.currentTime;
+        this.expT = (this.expT || []).filter((t) => now - t < 0.3);
+        if (this.expT.length >= 4 && d > 40) return;
+        this.expT.push(now);
         const c = this.chain(x, z, 1, false);
         const t = c.t;
-        const k = clamp(size, 0.5, 3);
+        const k = clamp(size, 0.5, 3) * (d > 150 ? 0.6 : 1);
         this.burst(c.in, t, 0.9 + k * 0.4, "lowpass", 2600, 70, 0.6, 0.9, 1.0 + k * 0.5);
         this.tone(c.in, t, "sine", 70, 24, 0.6 + k * 0.2, 0.8, 0.8 + k * 0.3);
         this.burst(c.in, t, 0.05, "bandpass", 1800, 1200, 0.8, 0.6, 0.07);
         // треск обломков
-        for (let i = 0; i < 6 * k; i++) this.burst(c.in, t + 0.1 + Math.random() * (0.5 + k * 0.3), 0.03, "bandpass", rnd(1500, 3500), 1000, 2, 0.06, 0.05);
+        const crackle = d > 120 ? 0 : Math.round(6 * k);
+        for (let i = 0; i < crackle; i++) this.burst(c.in, t + 0.1 + Math.random() * (0.5 + k * 0.3), 0.03, "bandpass", rnd(1500, 3500), 1000, 2, 0.06, 0.05);
     }
 
     detonation(x, z) {

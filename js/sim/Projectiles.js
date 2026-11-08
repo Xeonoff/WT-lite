@@ -86,19 +86,12 @@ function firstHit(battle, s, p0, p1, L) {
         }
     }
     // препятствия
-    for (const e of battle.world.querySeg(p0[0], p0[2], p1[0], p1[2], 3)) {
+    for (const e of battle.world.querySeg(p0[0], p0[2], p1[0], p1[2], 4)) {
         const o = e.o;
-        let t = -1;
-        if (e.type === "building" || e.type === "wreck") {
-            if (e.type === "wreck" && o.v === s.ignore) continue;
-            t = segObb(p0[0], p0[2], p1[0], p1[2], o);
-        } else if (e.type === "rock") {
-            t = segCircle(p0[0], p0[2], p1[0], p1[2], o.x, o.z, o.r * 0.85);
-        } else continue;
-        if (t < 0) continue;
-        const tt = t * L;
-        const y = p0[1] + s.d[1] * tt;
-        if (y > o.h) continue;
+        if (e.type !== "building" && e.type !== "wreck" && e.type !== "rock") continue;
+        if (e.type === "wreck" && o.v === s.ignore) continue;
+        const tt = battle.world.rayObstacle(e.type, o, p0, s.d, L);
+        if (tt < 0) continue;
         if (!best || tt < best.t) best = { t: tt, kind: e.type, o };
     }
     return best;

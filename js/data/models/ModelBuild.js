@@ -85,6 +85,25 @@ function prismPlanes(poly, n, t, zone) {
     return planes;
 }
 
+/**
+ * Ослабленная зона (смотровой прибор, шаровая установка, люк): тонкая плита поверх основного листа,
+ * приподнятая на 1,5 см, чтобы попадание в неё считалось раньше листа.
+ * c — точка на поверхности листа, n — наружная нормаль, u — направление ширины, round — восьмиугольник.
+ */
+export function patchPart({ frame, id, c, n, u, w, h, mm, name, round = false }) {
+    n = norm(n);
+    u = norm(sub(u, n.map((x) => x * dot(u, n))));
+    const v = cross(n, u);
+    const lift = 0.015;
+    const at = (a, b) => [0, 1, 2].map((k) => c[k] + u[k] * a + v[k] * b + n[k] * lift);
+    const pts = [];
+    if (round) for (let i = 0; i < 8; i++) { const a = (i + 0.5) / 8 * Math.PI * 2; pts.push(at(Math.cos(a) * w / 2, Math.sin(a) * h / 2)); }
+    else pts.push(at(w / 2, h / 2), at(-w / 2, h / 2), at(-w / 2, -h / 2), at(w / 2, -h / 2));
+    // обход против часовой стрелки при взгляде снаружи
+    const plate = { zone: "weak", mm, name, weak: true };
+    return { id, frame, kind: "convex", plate, planes: prismPlanes(pts, n, mm / 1000 + lift, "weak") };
+}
+
 /** Лист (координаты игры) → список наборов плоскостей выпуклых кусков */
 export function platePieces(pts, t, interior, zone) {
     const n = outerNormal(pts, interior);
@@ -145,6 +164,14 @@ export function applyModel(def, spec, moduleNames) {
         id: "hull", frame: "hull", kind: "box", min: [H.rearBottomZ, 0.04, -H.halfLow], max: [H.noseBottomZ, H.bottom, H.halfLow],
         plates: { side: plateOf("hull.side.lower"), front: plateOf("hull.front.lower"), rear: plateOf("hull.rear.lower"), bottom: plateOf("hull.bottom.front"), roof: plateOf("hull.bottom.front") },
     });
+
+    /* ослабленные зоны модели */
+    for (const W of spec.weakZones || []) {
+        parts.push(patchPart({
+            frame: W.parent, id: W.parent === "hull" ? "hull" : "turret", c: toGame(W.c), n: toGame(W.n), u: toGame(W.u),
+            w: W.w, h: W.h, mm: W.mm, name: W.name, round: !!W.round,
+        }));
+    }
 
     /* модули */
     const mods = [];

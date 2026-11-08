@@ -16,7 +16,6 @@ const TRANS_F = [1, 0.88, 0.62, 0];
 const DRIVE_F = [1, 0.7, 0.45, 0.12];
 const RACK_RELOAD = [1, 1.22, 1.5, 1.8];
 const BREECH_RELOAD = [1, 1.12, 1.32, 1];
-const BARREL_DISP = [1, 1.25, 1.65, 1];
 
 export class Vehicle {
     constructor(def, team, x, z, a, opts = {}) {
@@ -32,6 +31,7 @@ export class Vehicle {
         this.w = 0;          // фактическая угловая скорость корпуса
         this.tr = 0;         // относительный угол башни (или орудия в рубке)
         this.trRate = 0;
+        this.gp = 0;         // угол возвышения орудия относительно корпуса, рад (+ — вверх)
         this.aimPoint = null;
         this.input = { throttle: 0, steer: 0 };
         this.bloom = 1.4;
@@ -171,13 +171,17 @@ export class Vehicle {
         return out;
     }
 
-    dispersion() {
-        let d = (this.def.gun.disp / 1000) * this.bloom;
-        if (this.seatOk("gunner")) d *= 1 + 0.7 * (1 - this.seatHp("gunner"));
-        d *= BARREL_DISP[this.st("barrel")];
-        if (this.hasSeat("commander") && !this.seatOk("commander")) d *= 1.1;
-        return d;
+    /** Скорость вертикальной наводки, рад/с: без наводчика орудие не качается */
+    elevRate() {
+        if (this.dead || !this.seatOk("gunner")) return 0;
+        return this.def.gun.elevRate * DEG * (0.6 + 0.4 * this.seatHp("gunner"));
     }
+
+    /** Разброс орудия убран: снаряд летит строго по оси ствола (метод оставлен для совместимости) */
+    dispersion() {
+        return 0;
+    }
+
 
     gunBroken() { return this.mods.breech.hp <= 0 || this.mods.barrel.hp <= 0; }
 

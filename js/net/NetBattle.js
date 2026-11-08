@@ -11,6 +11,8 @@ import { angDiff, clamp } from "../core/Utils.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { SHELLS, SHELL_TYPES } from "../data/Shells.js";
 import { applyOwn, unpackRes, F_DEAD, F_FIRE, F_SPOTTED, F_SMOKE, INPUT_HZ, WORLD_LISTS, r2 } from "./Protocol.js";
+import { driveVehicle, vehicleObb } from "../sim/Physics.js";
+import { collideStatic } from "../sim/World.js";
 
 const INTERP = 0.12;        // задержка интерполяции чужих машин, с
 const EXTRAP_MAX = 0.2;     // предел экстраполяции при потере пакетов, с
@@ -23,8 +25,12 @@ class NetMode {
         this.tickets = [C.TICKETS, C.TICKETS];
         this.timeLeft = C.TIME;
         this.points = b.world.points.map((p) => ({ ...p, owner: -1, prog: 0, n: [0, 0] }));
+        this.kind = b.mode === "duel" ? "duel" : "domination";
+        this.freeSpawns = this.kind === "duel";
+        this.left = [0, 0];
     }
     apply(m) {
+        if (m.k === "duel") { this.timeLeft = m.tl; this.left = m.left; return; }
         this.tickets = m.tk;
         this.timeLeft = m.tl;
         m.p.forEach(([owner, prog, n0, n1], i) => {
@@ -34,6 +40,7 @@ class NetMode {
         });
     }
     hud() {
+        if (this.kind === "duel") return { kind: "duel", time: this.timeLeft, left: this.left };
         return { kind: "domination", tickets: this.tickets, points: this.points, time: this.timeLeft, max: Config.DOMINATION.TICKETS };
     }
     update() {}
@@ -62,10 +69,14 @@ export class NetBattle extends Battle {
     }
 
     /* ─────────── Время сервера ─────────── */
+    /**
+     * Часы сервера. Пакет не может прийти раньше, чем его отправили, а опоздать может (кадр, сеть),
+     * поэтому «ранние» пакеты сдвигают часы быстро, а запоздавшие — едва-едва.
+     */
     syncClock(tm) {
         const est = tm - performance.now() / 1000;
         if (this.offset === null || est - this.offset > 0.25 || est - this.offset < -1) this.offset = est;
-        else this.offset += (est - this.offset) * 0.08;
+        else this.offset += (est - this.offset) * (est > this.offset ? 0.3 : 0.03);
     }
     serverNow() { return performance.now() / 1000 + this.offset; }
 
@@ -120,10 +131,10 @@ export class NetBattle extends Battle {
             const v = this.byId.get(a[0]);
             if (!v) continue;
             seen.add(v);
-            const st = { tm: s.tm, x: a[1], z: a[2], a: a[3], v: a[4], w: a[5], tr: a[6] };
+            const st = { tm: s.tm, x: a[1], z: a[2], a: a[3], v: a[4], w: a[5], tr: a[6], gp: a[10] || 0 };
             // машина снова появилась из засвета — старые точки буфера не годятся для интерполяции
             if (!v.visible[T]) v.buf.length = 0;
-            if (!v.buf.length) { v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; }
+            if (!v.buf.length) { v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.gp = st.gp; }
             v.buf.push(st);
             if (v.buf.length > 10) v.buf.shift();
             const f = a[7];
@@ -270,14 +281,20 @@ export class NetBattle extends Battle {
 
     /* ─────────── Кадр клиента ─────────── */
     update(dt) {
+        // кадровый шаг игры ограничен 0.05 с; своя машина считается по реальному времени,
+        // иначе при просадке FPS она отстаёт от сервера и коррекция дёргает её назад
+        const now = performance.now() / 1000;
+        const rdt = this.frameAt ? clamp(now - this.frameAt, 0, 0.25) : dt;
+        this.frameAt = now;
         this.time = this.serverNow();
         if (this.ended) this.endT = (this.endT || 0) + dt;
         const rt = this.time - INTERP;
         for (const v of this.vehicles) {
             if (v.dead || !v.buf.length) continue;
+            if (v.isPlayer) { if (dt > 0) this.predictOwn(v, rdt); continue; }
             const ox = v.x, oz = v.z, otr = v.tr;
-            const st = v.isPlayer ? this.extrapolate(v.buf[v.buf.length - 1], this.time) : this.sample(v.buf, rt);
-            v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.v = st.v; v.w = st.w;
+            const st = this.sample(v.buf, rt);
+            v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.v = st.v; v.w = st.w; v.gp = st.gp;
             if (dt > 0) {
                 const hw = v.def.dims.W / 2;
                 // гусеницы крутятся по фактическому смещению, без скачков после телепортации
@@ -306,6 +323,54 @@ export class NetBattle extends Battle {
         }
     }
 
+    /**
+     * Своя машина — с предсказанием: ход, башня и орудие считаются локально по своему же вводу
+     * (та же физика, что на сервере), а расхождение с сервером плавно гасится.
+     */
+    predictOwn(p, dt) {
+        if (dt <= 0) return;
+        const ox = p.x, oz = p.z;
+        // та же физика, что на сервере, шагами не длиннее серверного тика
+        for (let left = dt; left > 1e-4;) {
+            const h = Math.min(left, 1 / 30);
+            driveVehicle(p, h);
+            const push = collideStatic(this.world, p, vehicleObb(p), h);
+            if (push) { p.x += push.x; p.z += push.z; }
+            this.aimTurret(p, h);
+            left -= h;
+        }
+        // состояние сервера, продлённое до «сейчас» (с учётом пути пакета) по его же скоростям
+        const s = p.buf[p.buf.length - 1];
+        const e = clamp(this.time + (this.net.rtt || 0) / 2000 - s.tm, 0, 0.3);
+        const ta = s.a + s.w * e;
+        const tx = s.x + Math.cos(ta) * s.v * e, tz = s.z + Math.sin(ta) * s.v * e;
+        const err = Math.hypot(tx - p.x, tz - p.z), errA = Math.abs(angDiff(p.a, ta));
+        // сервер видит наш ввод с запаздыванием: такая разница — норма, её гасим медленно,
+        // а всё, что сверх неё, — быстро
+        const lag = (this.net.rtt || 0) / 2000 + 1 / INPUT_HZ + 0.06;
+        const kSlow = 1 - Math.exp(-dt * 0.8), kFast = 1 - Math.exp(-dt * 6);
+        const fix = (diff, slack) => {
+            const a = Math.abs(diff);
+            return a > slack ? diff * kSlow + Math.sign(diff) * (a - slack) * kFast : diff * kSlow;
+        };
+        if (err > 4 || errA > 0.6) {
+            // сильное расхождение (столкновение, рывок сервера) — сразу к серверу
+            p.x = tx; p.z = tz; p.a = ta; p.v = s.v; p.w = s.w;
+        } else if (err > 1e-4) {
+            const f = fix(err, 0.2 + Math.abs(s.v) * lag) / err;
+            p.x += (tx - p.x) * f;
+            p.z += (tz - p.z) * f;
+            p.a += fix(angDiff(p.a, ta), 0.01 + Math.abs(s.w) * lag);
+        }
+        p.tr += fix(angDiff(p.tr, s.tr), 0.01 + p.turretRate() * lag);
+        p.gp += fix(s.gp - p.gp, 0.003 + p.elevRate() * lag);
+        const hw = p.def.dims.W / 2;
+        if (Math.hypot(p.x - ox, p.z - oz) < 6) {
+            p.trackPhase[0] += (p.v + p.w * hw) * dt;
+            p.trackPhase[1] += (p.v - p.w * hw) * dt;
+        }
+    }
+
     sample(buf, rt) {
         if (rt <= buf[0].tm) return buf[0];
         for (let i = 0; i < buf.length - 1; i++) {
@@ -314,7 +379,7 @@ export class NetBattle extends Battle {
                 const k = (rt - a.tm) / Math.max(1e-4, b.tm - a.tm);
                 return {
                     x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k,
-                    a: a.a + angDiff(a.a, b.a) * k, tr: a.tr + angDiff(a.tr, b.tr) * k,
+                    a: a.a + angDiff(a.a, b.a) * k, tr: a.tr + angDiff(a.tr, b.tr) * k, gp: a.gp + (b.gp - a.gp) * k,
                     v: a.v + (b.v - a.v) * k, w: a.w + (b.w - a.w) * k,
                 };
             }
@@ -325,7 +390,7 @@ export class NetBattle extends Battle {
     extrapolate(s, t) {
         const e = clamp(t - s.tm, 0, EXTRAP_MAX);
         const a = s.a + s.w * e;
-        return { x: s.x + Math.cos(a) * s.v * e, z: s.z + Math.sin(a) * s.v * e, a, tr: s.tr, v: s.v, w: s.w };
+        return { x: s.x + Math.cos(a) * s.v * e, z: s.z + Math.sin(a) * s.v * e, a, tr: s.tr, gp: s.gp, v: s.v, w: s.w };
     }
 
     sendInput() {

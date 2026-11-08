@@ -375,7 +375,9 @@ export function buildVehicleMesh(def, biomeKey, opts = {}) {
         mg.position.set(-0.1, 0.12, 0.14);
     }
 
-    return { root, turret, gun, barrel, tracks, meshes, camo, def };
+    // орудие качается вокруг оси цапф (z); поворот рубочного орудия — вокруг y
+    const setGunPitch = (gp) => { gun.rotation.z = gp; };
+    return { root, turret, gun, barrel, tracks, meshes, camo, def, setGunPitch };
 }
 
 /** Освободить GPU-ресурсы модели (кроме общих геометрий и материалов) */
@@ -466,6 +468,8 @@ function wrapDetailed(def, model, camo, kv) {
         root, turret, gun, tracks: [], meshes, camo, def, detailed: true, model: kv || null,
         // откат ствола: в игре — вдоль +X, в модели — вдоль +Z
         barrel: { position: { set x(v) { if (barrel) barrel.position.z = v; }, get x() { return barrel ? barrel.position.z : 0; } } },
+        // в модели +X — левый борт: подъём ствола — поворот вокруг X в минус
+        setGunPitch(gp) { if (gun) gun.rotation.x = -gp; },
         setTrackPhase(ph) {
             if (kv) { kv.setTrackPhase(ph[0], ph[1]); return; }
             if (ph[0] === phase[0] && ph[1] === phase[1]) return;

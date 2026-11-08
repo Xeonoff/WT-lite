@@ -64,6 +64,13 @@ export const Config = {
         MEMORY: 2.5,
     },
 
+    DUEL: {
+        TIME: 10 * 60,
+        BOT_LIVES: 4,
+        BOT_SKILL: 0.72,
+        BOT_RESPAWN: 5,
+    },
+
     DOMINATION: {
         TICKETS: 600,
         KILL_COST: 10,
@@ -79,9 +86,10 @@ export const Config = {
         COOLDOWN: 80,
         BOT_MULT: 3,          // боты вызывают реже
         DELAY: 3.2,           // от вызова до первого разрыва
-        SHELLS: 8,
+        SHELLS: 7,
         SPREAD: 10,
         RANGE: 330,
+        BOT_TEAM_GAP: 40,     // боты одной команды вызывают не чаще раза в N с и не поверх идущего удара
     },
 
     WAVES: {

@@ -34,7 +34,8 @@ export class Room {
         this.id = id;
         this.name = cleanName(opts.name) || "Комната";
         this.hostId = host.id;
-        this.settings = { map: "random", weather: "random", teamSize: 6 };
+        this.settings = { mode: "domination", map: "random", weather: "random", teamSize: 6 };
+        this.pilotsByKey = new Map();     // игрок (по ключу браузера) → пилот текущего боя
         this.applySettings(opts);
         this.members = new Map();     // clientId -> { client, team, lineup, ready, pilot }
         this.state = "lobby";
@@ -47,13 +48,29 @@ export class Room {
         const S = this.settings;
         if (o.map === "random" || MAPS[o.map]) S.map = o.map;
         if (o.weather === "random" || WEATHER[o.weather]) S.weather = o.weather;
+        if (o.mode === "domination" || o.mode === "duel") S.mode = o.mode;
         if (Number.isFinite(+o.teamSize)) S.teamSize = Math.max(2, Math.min(8, Math.round(+o.teamSize)));
+        // дуэль — один на один
+        if (S.mode === "duel") S.teamSize = 1;
+        else if (S.teamSize < 2) S.teamSize = 6;
+    }
+
+    /** Сетап игрока для нации команды: присланный клиентом (проверенный) или машины I ранга */
+    lineupFor(client, team) {
+        const nation = NATIONS[team];
+        const ids = client.lineups && Array.isArray(client.lineups[nation]) ? client.lineups[nation] : [];
+        const ok = [];
+        for (const id of ids) {
+            const d = typeof id === "string" && getVehicle(id);
+            if (d && d.nation === nation && !ok.includes(id) && ok.length < LINEUP_MAX) ok.push(id);
+        }
+        return ok.length ? ok : defaultLineup(team);
     }
 
     /* ─────────── Лобби ─────────── */
     summary() {
         return {
-            id: this.id, name: this.name, state: this.state, map: this.settings.map,
+            id: this.id, name: this.name, state: this.state, map: this.settings.map, mode: this.settings.mode,
             players: this.members.size, max: this.settings.teamSize * 2,
             host: this.members.get(this.hostId) ? this.members.get(this.hostId).client.name : "",
         };
@@ -78,12 +95,18 @@ export class Room {
 
     add(client) {
         if (this.members.size >= this.settings.teamSize * 2) return "комната заполнена";
-        const team = this.teamCount(0) <= this.teamCount(1) ? 0 : 1;
-        const m = { client, team, lineup: [], ready: false, pilot: null };
+        let prev = this.state === "battle" ? this.pilotsByKey.get(client.key) : null;
+        // тот же игрок уже в комнате (вторая вкладка) — прежнего пилота не отдаём
+        if (prev && [...this.members.values()].some((o) => o.pilot === prev || o.oldPilot === prev)) prev = null;
+        const team = prev ? prev.team : this.teamCount(0) <= this.teamCount(1) ? 0 : 1;
+        const m = { client, team, lineup: this.lineupFor(client, team), ready: false, pilot: null };
         this.members.set(client.id, m);
         client.room = this;
         this.pushView();
-        if (this.state === "battle") this.joinBattle(m);
+        if (this.state === "battle") {
+            if (prev) { m.oldPilot = prev; this.rejoin(client); }
+            else this.joinBattle(m);
+        }
         return null;
     }
 
@@ -102,7 +125,7 @@ export class Room {
         const m = this.members.get(client.id);
         if (!m || this.state !== "lobby" || (team !== 0 && team !== 1)) return;
         if (m.team !== team && this.teamCount(team) >= this.settings.teamSize) return;
-        if (m.team !== team) m.lineup = [];
+        if (m.team !== team) m.lineup = this.lineupFor(client, team);
         m.team = team;
         m.ready = false;
         this.pushView();
@@ -148,11 +171,15 @@ export class Room {
         const mapId = S.map === "random" ? MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] : S.map;
         const pilots = ready.map((m) => ({ id: m.client.id, name: m.client.name, team: m.team, lineup: m.lineup }));
         this.run(() => {
-            this.battle = new Battle({ mode: "domination", mapId, seed: 1 + Math.floor(Math.random() * 1e9), weather: S.weather, nations: NATIONS, pilots, teamSize: S.teamSize });
+            this.battle = new Battle({ mode: S.mode, mapId, seed: 1 + Math.floor(Math.random() * 1e9), weather: S.weather, nations: NATIONS, pilots, teamSize: S.teamSize });
         });
         this.queue = null;
         const b = this.battle;
-        for (const m of this.members.values()) m.pilot = b.pilots.find((P) => P.id === m.client.id) || null;
+        this.pilotsByKey = new Map();
+        for (const m of this.members.values()) {
+            m.pilot = b.pilots.find((P) => P.id === m.client.id) || null;
+            if (m.pilot) this.pilotsByKey.set(m.client.key, m.pilot);
+        }
         this.state = "battle";
         this.tick = 0;
         this.sentShots = new Set();
@@ -162,7 +189,9 @@ export class Room {
             m.lastInput = 0;
             if (m.pilot) this.sendStart(m); else this.joinBattle(m);
         }
-        this.timer = setInterval(() => this.step(), 1000 / TICK_HZ);
+        this.clockAt = performance.now();
+        this.acc = 0;
+        this.timer = setInterval(() => this.pump(), 1000 / TICK_HZ / 2);
         this.pushView();
         return null;
     }
@@ -170,8 +199,9 @@ export class Room {
     /** Подключение к уже идущему бою */
     joinBattle(m) {
         const b = this.battle;
-        if (!m.lineup.length) m.lineup = defaultLineup(m.team);
+        if (!m.lineup.length) m.lineup = this.lineupFor(m.client, m.team);
         m.pilot = b.addPilot({ id: m.client.id, name: m.client.name, team: m.team, lineup: m.lineup });
+        this.pilotsByKey.set(m.client.key, m.pilot);
         this.sendStart(m);
     }
 
@@ -216,6 +246,21 @@ export class Room {
         const prev = current;
         current = this;
         try { return fn(); } finally { current = prev; }
+    }
+
+    /**
+     * Время боя идёт вровень с реальным: таймер срабатывает неровно (на Windows шаг ~16 мс,
+     * под нагрузкой — реже), поэтому шаги отсчитываются по часам, а пропущенные догоняются.
+     */
+    pump() {
+        const now = performance.now();
+        this.acc += (now - this.clockAt) / 1000;
+        this.clockAt = now;
+        const dt = 1 / TICK_HZ;
+        let n = 0;
+        while (this.acc >= dt && n < 5 && this.battle) { this.step(); this.acc -= dt; n++; }
+        // сервер не успевает — не копим долг, иначе потом будет рывок
+        if (n === 5) this.acc = Math.min(this.acc, dt);
     }
 
     step() {
@@ -301,7 +346,8 @@ export class Room {
     /* ─────────── События симуляции → сообщения ─────────── */
     ownerOf(v) {
         if (!v || !v.pilot) return null;
-        return this.members.get(v.pilot.id) || null;
+        for (const m of this.members.values()) if (m.pilot === v.pilot) return m;
+        return null;
     }
 
     onSimEvent(name, e) {
@@ -387,7 +433,7 @@ export class Room {
     sendSnapshots() {
         const b = this.battle;
         const M = b.modeCtl;
-        const mode = { tk: M.tickets.map(r2), tl: r2(M.timeLeft), p: M.points.map((p) => [p.owner, r2(p.prog), p.n[0], p.n[1]]) };
+        const mode = M.netState();
         const strikes = b.strikes.map((s) => [r2(s.x), r2(s.z), s.team, s.n, s.total, s.r]);
         for (const m of this.members.values()) {
             const P = m.pilot;
@@ -420,7 +466,7 @@ export class Room {
             if (!P) continue;
             m.client.send({
                 t: "end",
-                r: { win: r.winner === P.team, winner: r.winner, reason: r.reason, mode: r.mode, stats: { ...P.stats }, vstats: P.vstats, pilots: r.pilots.map((p) => ({ name: p.name, team: p.team, kills: p.stats.kills })) },
+                r: { win: r.winner === P.team, draw: r.winner === -1, winner: r.winner, reason: r.reason, mode: r.mode, stats: { ...P.stats }, vstats: P.vstats, pilots: r.pilots.map((p) => ({ name: p.name, team: p.team, kills: p.stats.kills })) },
             });
         }
     }
@@ -429,6 +475,7 @@ export class Room {
         this.stop();
         this.state = "lobby";
         for (const m of this.members.values()) { m.pilot = null; m.oldPilot = null; m.input = null; }
+        this.pilotsByKey = new Map();
         this.pushView();
     }
 

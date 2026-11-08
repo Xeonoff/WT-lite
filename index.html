@@ -26,6 +26,11 @@
         <div id="spotted"><span>◉</span> ВАС ВИДЯТ</div>
         <div id="feed"></div>
         <div id="banner"><h2 id="bnT"></h2><p id="bnS"></p></div>
+        <div id="specBar" class="panel ui-block hidden">
+            <span class="sbT">НАБЛЮДЕНИЕ</span><span id="specWho"></span>
+            <span class="sbK"><b>ЛКМ</b> / <b>ПКМ</b> — следующий / предыдущий · <b>V</b> — вид сзади · <b>Esc</b> — выбор техники</span>
+            <button class="ghost sm" data-act="specBack">ВЫБОР ТЕХНИКИ</button>
+        </div>
 
         <div id="leftCol">
         <div id="crewLog"></div>
@@ -103,7 +108,7 @@
     <!-- ═══════════════ АНГАР ═══════════════ -->
     <div id="hangarScr" class="screen hidden">
         <div class="hTop">
-            <button class="ghost" data-act="menu">◂ МЕНЮ</button>
+            <button class="ghost" id="hBackBtn" data-act="hBack">◂ МЕНЮ</button>
             <div id="hNations"></div>
         </div>
         <div class="hBody">
@@ -130,6 +135,7 @@
                 <button class="ghost" data-act="olBack">◂ МЕНЮ</button>
                 <h2 class="olTitle">Онлайн-бои</h2>
                 <span id="olStatus" class="olStatus">не подключено</span>
+                <button class="ghost" data-act="olHangar" title="Ангар и сетап — без отключения от сервера">АНГАР ▸</button>
             </div>
 
             <div id="olConnect" class="panel olCard olNarrow">
@@ -149,9 +155,10 @@
                 <div class="panel olCard">
                     <h3>Новая комната</h3>
                     <label class="olField"><span>Название</span><input id="olRoomName" maxlength="18" autocomplete="off"></label>
+                    <label class="olField"><span>Режим</span><select id="olMode"><option value="domination">Превосходство (команды)</option><option value="duel">Дуэль 1 на 1</option></select></label>
                     <label class="olField"><span>Карта</span><select id="olMap"></select></label>
                     <label class="olField"><span>Машин в команде</span><select id="olSize"></select></label>
-                    <p class="note">Свободные места занимают боты. Команды: СССР против Германии, сетап — из ангара.</p>
+                    <p class="note">Свободные места занимают боты. Команды: СССР против Германии, сетап — из ангара (кнопка «Ангар» вверху — без отключения). В дуэли против вас — один игрок или бот с тем же числом машин.</p>
                     <div class="btnrow"><button class="big" data-act="olCreate">СОЗДАТЬ</button></div>
                 </div>
             </div>
@@ -186,6 +193,7 @@
             <div id="spNone" class="note hidden">Доступной техники нет. Наблюдайте за боем или покиньте его — награда сохранится.</div>
             <div class="btnrow">
                 <button class="big" id="spGo" data-act="spawn">В БОЙ ▸</button>
+                <button class="ghost" id="spWatch" data-act="spectate">НАБЛЮДАТЬ</button>
                 <button class="ghost" data-act="leave">ПОКИНУТЬ БОЙ</button>
             </div>
         </div>

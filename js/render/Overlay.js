@@ -51,6 +51,8 @@ export class Overlay {
         // метки техники
         for (const v of b.vehicles) {
             if (v.dead || v.isPlayer) continue;
+            // в виде сзади за союзником его табличка закрывала бы обзор
+            if (game.spec && game.spec.v === v && game.camTs > 0.5) continue;
             const ally = v.team === pt;
             if (!ally && !v.visible[pt]) continue;
             const top = v.def.dims.H + v.def.turret.h + 2.2;
@@ -345,17 +347,15 @@ export class Overlay {
         }
         const cw = aim.cursor || aim.point;
         const ppm = cw ? sc.pxPerMeter(cw[0], cw[1], cw[2]) : 4;
-        const disp = p.dispersion();
-        const rad = Math.max(7, disp * (aim.dist || 50) * ppm);
+        const rad = 8;
         const ready = p.canFire();
         // маркер фактического направления орудия
         if (cw) {
-            const piv = gunPivotWorld(p);
-            const dd = Math.hypot(cw[0] - piv[0], cw[2] - piv[2]);
-            const gy = p.gunYaw();
-            const [gx, gyy] = sc.project(piv[0] + Math.cos(gy) * dd, cw[1], piv[2] + Math.sin(gy) * dd);
+            const fl = game.battle.fireLine(p);
+            const L = Math.max(4, Math.hypot(cw[0] - fl.m[0], cw[1] - fl.m[1], cw[2] - fl.m[2]));
+            const [gx, gyy, front] = sc.project(fl.m[0] + fl.dir[0] * L, fl.m[1] + fl.dir[1] * L, fl.m[2] + fl.dir[2] * L);
             const off = Math.hypot(gx - mx, gyy - my);
-            if (off > 4) {
+            if (off > 4 && front) {
                 g.strokeStyle = "rgba(255,255,255,.55)";
                 g.lineWidth = 1.5;
                 g.beginPath(); g.arc(gx, gyy, 5, 0, 6.283); g.stroke();

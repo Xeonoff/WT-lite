@@ -14,6 +14,13 @@ const irot = (p, a) => {
     const c = Math.cos(a), s = Math.sin(a);
     return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c];
 };
+/** Качание орудия: положительный угол поднимает ствол (+X к +Y) */
+const pitchUp = (p, a) => {
+    if (!a) return p;
+    const c = Math.cos(a), s = Math.sin(a);
+    return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]];
+};
+const pitchDown = (p, a) => pitchUp(p, -a);
 
 export function worldToHull(v, p) { return irot([p[0] - v.x, p[1], p[2] - v.z], v.a); }
 export function hullToWorld(v, p) { const r = rot(p, v.a); return [r[0] + v.x, r[1], r[2] + v.z]; }
@@ -27,7 +34,7 @@ export function frameToHull(v, frame, p) {
     let q = p;
     if (frame === "gun") {
         const piv = v.def.gunPivot;
-        const r = rot(q, v.gunRel());
+        const r = rot(pitchUp(q, v.gp || 0), v.gunRel());
         q = [r[0] + piv[0], r[1] + piv[1], r[2] + piv[2]];
     }
     const r = rot(q, v.turretRel());
@@ -41,7 +48,7 @@ export function hullToFrame(v, frame, p) {
     let q = irot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], v.turretRel());
     if (frame === "gun") {
         const piv = v.def.gunPivot;
-        q = irot([q[0] - piv[0], q[1] - piv[1], q[2] - piv[2]], v.gunRel());
+        q = pitchDown(irot([q[0] - piv[0], q[1] - piv[1], q[2] - piv[2]], v.gunRel()), v.gp || 0);
     }
     return q;
 }
@@ -49,14 +56,14 @@ export function hullToFrame(v, frame, p) {
 export function dirFrameToHull(v, frame, d) {
     if (frame === "hull") return d;
     let q = d;
-    if (frame === "gun") q = rot(q, v.gunRel());
+    if (frame === "gun") q = rot(pitchUp(q, v.gp || 0), v.gunRel());
     return rot(q, v.turretRel());
 }
 
 export function dirHullToFrame(v, frame, d) {
     if (frame === "hull") return d;
     let q = irot(d, v.turretRel());
-    if (frame === "gun") q = irot(q, v.gunRel());
+    if (frame === "gun") q = pitchDown(irot(q, v.gunRel()), v.gp || 0);
     return q;
 }
 

@@ -299,6 +299,26 @@
 #xrSub .md { color: var(--crit); }
 #xrSub .fi { color: #ffb070; }
 
+#specBar {
+    position: absolute;
+    top: 74px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 14px;
+    max-width: calc(100vw - 32px);
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--muted);
+}
+#specBar .sbT { font: 700 12px/1 var(--font-display); letter-spacing: .2em; color: var(--brass); }
+#specWho { color: #fff; font-weight: 600; }
+#specWho i { color: var(--muted); font-style: normal; font-weight: 500; }
+#specBar .sbK b { color: var(--brass); font-family: var(--font-display); font-weight: 700; }
+
 #hints {
     position: absolute;
     right: 14px;

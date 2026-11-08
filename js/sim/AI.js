@@ -89,7 +89,7 @@ export class Brain {
             this.chooseShell();
             // артудар по малоподвижной цели
             if (b.mode !== "range" && this.dist > 55 && this.dist < Config.ARTY.RANGE && Math.abs(t.v) < 1.5 &&
-                b.artyLeft(v) <= 0 && Math.random() < 0.05 * this.skill) {
+                b.artyLeft(v) <= 0 && Math.random() < 0.025 * this.skill) {
                 b.callArtillery(v, t.x + rnd(-4, 4), t.z + rnd(-4, 4));
             }
         }
@@ -338,6 +338,8 @@ export class Brain {
         const err = Math.abs(angDiff(v.gunYaw(), want));
         const tol = Math.atan2(t.def.dims.W * 0.45, this.dist);
         if (err > tol) return;
+        const tolP = Math.atan2(t.def.dims.H * 0.35, this.dist);
+        if (Math.abs(b.wantPitch(v) - v.gp) > tolP) return;
         // ждём сведения (опытные экипажи терпеливее)
         const maxBloom = 1.5 + (1 - this.skill) * 2.2 + (v.def.role === "light" ? 1.5 : 0) + (this.scootT > 0 ? 1 : 0);
         if (v.bloom > maxBloom && b.time - this.react < 6) return;

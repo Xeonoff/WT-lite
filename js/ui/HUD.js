@@ -183,6 +183,10 @@ export class HUD {
                 <div class="pts">${pts}</div>
                 <div class="tk e"><div class="bar"><i style="width:${(en / m.max * 100).toFixed(1)}%"></i></div><b>${Math.ceil(en)}</b></div>
                 <div class="timer">${fmtTime(m.time)}</div>`;
+        } else if (m.kind === "duel") {
+            const pt = b.playerTeam;
+            el.innerHTML = `<div class="tk a"><b>${m.left[pt]}</b></div><div class="winfo">ДУЭЛЬ · машин в запасе</div><div class="tk e"><b>${m.left[1 - pt]}</b></div>
+                <div class="timer">${fmtTime(m.time)}</div>`;
         } else if (m.kind === "waves") {
             const st = m.state === "fight" ? `противников: <b>${m.enemies}</b>` : m.state === "break" ? `передышка: <b>${Math.ceil(m.t)} с</b>` : `начало через <b>${Math.ceil(m.t)} с</b>`;
             el.innerHTML = `<div class="wave"><span>ВОЛНА</span><b>${m.wave || "—"}</b></div><div class="winfo">${st}</div>

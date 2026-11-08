@@ -1,8 +1,17 @@
 import { Events } from "../core/Events.js";
-import { seeded, clamp, segObb, segCircle, circleObb, ptInObb, TAU } from "../core/Utils.js";
+import { seeded, clamp, segObb, segCircle, circleObb, ptInObb, TAU, rayAabb } from "../core/Utils.js";
+import { rayConvex, raycastVehicle } from "./Armor.js";
+
+/** Луч в системе объекта, повёрнутого на угол a вокруг вертикали (как экземпляры в WorldMesh) */
+function toLocal(o, a, p, d) {
+    const c = Math.cos(-a), s = Math.sin(-a);
+    const x = p[0] - o.x, z = p[2] - o.z;
+    return [[x * c - z * s, p[1], x * s + z * c], [d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c]];
+}
 import { MAPS, BIOMES } from "../data/Maps.js";
 
 const CELL = 4;          // клетка навигационной сетки, м
+const WRECK_SKIP_TURRET = new Set(["turret", "barrel"]);
 const BUCKET = 16;       // ячейка пространственного хеша, м
 
 export class World {
@@ -70,6 +79,13 @@ export class World {
                 { x: S - 26, z: S * 0.5, a: Math.PI },
                 { x: S * 0.25, z: 26, a: Math.PI / 2 },
                 { x: S * 0.75, z: 26, a: Math.PI / 2 },
+            ];
+        } else if (this.mode === "duel") {
+            // дуэль: без точек, стороны ближе друг к другу
+            this.points = [];
+            this.spawns = [
+                { x: S * 0.5, z: S * 0.74, a: -Math.PI / 2, spread: 14 },
+                { x: S * 0.5, z: S * 0.26, a: Math.PI / 2, spread: 14 },
             ];
         } else {
             this.points = [];
@@ -648,6 +664,54 @@ export class World {
         const minx = Math.min(x1, x2) - pad, maxx = Math.max(x1, x2) + pad;
         const minz = Math.min(z1, z2) - pad, maxz = Math.max(z1, z2) + pad;
         return this.query((minx + maxx) / 2, (minz + maxz) / 2, Math.max(maxx - minx, maxz - minz) / 2);
+    }
+
+    /**
+     * Точное пересечение луча с препятствием (для снарядов и прицела), м от p0 или −1.
+     * Совпадает с тем, что нарисовано: стены и двускатная крыша / парапет, скала-эллипсоид,
+     * подбитая машина — по её броне (без сорванной башни).
+     */
+    rayObstacle(type, o, p0, d, L) {
+        if (type === "wreck") {
+            if (!o.v) return -1;
+            const skip = o.v.deathCause === "ammo" ? WRECK_SKIP_TURRET : null;
+            const h = raycastVehicle(o.v, p0, d, L, skip);
+            return h ? h.t : -1;
+        }
+        if (type === "rock") {
+            // додекаэдр в WorldMesh: центр на 0,3h, полуоси r·sx, 0,75h, r·sz — вписанный эллипсоид
+            const [lp, ld] = toLocal(o, o.rot || 0, p0, d);
+            const rx = o.r * (o.sx || 1) * 0.86, ry = o.h * 0.75 * 0.86, rz = o.r * (o.sz || 1) * 0.86;
+            const ox = lp[0] / rx, oy = (lp[1] - o.h * 0.3) / ry, oz = lp[2] / rz;
+            const dx = ld[0] / rx, dy = ld[1] / ry, dz = ld[2] / rz;
+            const A = dx * dx + dy * dy + dz * dz, B = ox * dx + oy * dy + oz * dz, C = ox * ox + oy * oy + oz * oz - 1;
+            const disc = B * B - A * C;
+            if (disc < 0) return -1;
+            const t = (-B - Math.sqrt(disc)) / A;
+            return t >= 0 && t <= L ? t : -1;
+        }
+        if (type === "building") {
+            const [lp, ld] = toLocal(o, o.a, p0, d);
+            let best = -1;
+            const take = (t) => { if (t >= 0 && t <= L && (best < 0 || t < best)) best = t; };
+            const w = rayAabb(lp, ld, [-o.hl, 0, -o.hw], [o.hl, o.h, o.hw], L);
+            if (w) take(Math.max(0, w.t0));
+            if (o.roof === "gable") {
+                // скат вдоль длинной стороны, свесы как у модели
+                const rh = Math.min(o.hw * 1.1, 3.4), wz = o.hw + 0.4, len = Math.hypot(rh, wz);
+                const planes = [
+                    { n: [0, -1, 0], d: -o.h }, { n: [1, 0, 0], d: o.hl + 0.3 }, { n: [-1, 0, 0], d: o.hl + 0.3 },
+                    { n: [0, wz / len, rh / len], d: (wz / len) * (o.h + rh) }, { n: [0, wz / len, -rh / len], d: (wz / len) * (o.h + rh) },
+                ];
+                const r = rayConvex(lp, ld, planes, L);
+                if (r && r.t0 >= 0) take(r.t0);
+            } else if (o.roof === "flat") {
+                const r = rayAabb(lp, ld, [-o.hl - 0.15, o.h, -o.hw - 0.15], [o.hl + 0.15, o.h + 0.35, o.hw + 0.15], L);
+                if (r) take(Math.max(0, r.t0));
+            }
+            return best;
+        }
+        return -1;
     }
 
     /* ───────────────────── Видимость ───────────────────── */

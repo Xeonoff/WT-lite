@@ -42,8 +42,26 @@ export class Screens {
         document.body.classList.toggle("inMenu", id === "menu" || id === "hangarScr");
         if (id !== "hangarScr" && this.hMode !== "model") this.setHangarMode("model");
         if (id === "menu") this.renderMenu();
-        if (id === "hangarScr") this.renderHangar();
-        if (id === "onlineScr") this.renderOnline();
+        if (id === "hangarScr") {
+            const r = this.hangarReturn === "onlineScr" && this.ol.room;
+            $("hBackBtn").textContent = this.hangarReturn === "onlineScr" ? (r ? "◂ В КОМНАТУ" : "◂ ОНЛАЙН") : "◂ МЕНЮ";
+            this.renderHangar();
+        }
+        if (id === "onlineScr") { this.olPushLineups(); this.renderOnline(); }
+    }
+
+    /** Ангар из онлайн-хаба: соединение и комната сохраняются, нация — своей команды */
+    openOnlineHangar() {
+        this.hangarReturn = "onlineScr";
+        const me = this.olMe();
+        if (me) this.hangarNation = TEAM_NATION[me.team];
+        this.hangarSel = null;
+        this.show("hangarScr");
+    }
+    hangarBack() {
+        const to = this.hangarReturn || "menu";
+        this.hangarReturn = null;
+        this.show(to);
     }
     hideAll() {
         for (const s of SCREENS) if (!["settingsScr", "refScr"].includes(s)) $(s).classList.add("hidden");
@@ -74,7 +92,11 @@ export class Screens {
             const g = this.game;
             switch (act) {
                 case "play": this.startBattle(); break;
-                case "hangar": this.show("hangarScr"); break;
+                case "hangar": this.hangarReturn = null; this.show("hangarScr"); break;
+                case "hBack": this.hangarBack(); break;
+                case "olHangar": this.openOnlineHangar(); break;
+                case "spectate": g.startSpectate(); break;
+                case "specBack": g.stopSpectate(true); break;
                 case "menu": this.show("menu"); break;
                 case "settings": this.openModal("settingsScr"); break;
                 case "ref": this.openModal("refScr"); break;
@@ -91,7 +113,7 @@ export class Screens {
                 case "hNation": this.hangarNation = t.dataset.v; this.hangarSel = null; this.renderHangar(); break;
                 case "hSel": this.hangarSel = t.dataset.v; this.renderHangar(); break;
                 case "research": if (Profile.research(t.dataset.v)) { g.audio.ui("good"); this.renderHangar(); } else g.audio.ui("bad"); break;
-                case "lineup": Profile.toggleLineup(t.dataset.v); this.renderHangar(); break;
+                case "lineup": Profile.toggleLineup(t.dataset.v); this.renderHangar(); this.olPushLineups(); break;
                 case "testdrive": this.testDrive(t.dataset.v); break;
                 case "spSel": this.spawnSel = t.dataset.v; this.renderSpawn(); break;
                 case "refTab": this.renderRef(t.dataset.v); break;
@@ -102,7 +124,7 @@ export class Screens {
                 case "olBack": this.show("menu"); break;
                 case "olConnect": this.olConnect(); break;
                 case "olRefresh": g.net.send({ t: "rooms" }); break;
-                case "olCreate": g.net.send({ t: "create", name: $("olRoomName").value || g.net.name, map: $("olMap").value, teamSize: +$("olSize").value }); break;
+                case "olCreate": g.net.send({ t: "create", name: $("olRoomName").value || g.net.name, mode: $("olMode").value, map: $("olMap").value, teamSize: +$("olSize").value }); break;
                 case "olJoin": g.net.send({ t: "join", id: t.dataset.v }); break;
                 case "olTeam": g.net.send({ t: "team", team: +t.dataset.v }); break;
                 case "olReady": { const me = this.olMe(); g.net.send({ t: "ready", v: !(me && me.ready) }); break; }
@@ -317,6 +339,7 @@ export class Screens {
             if (this.current === "onlineScr") { $("olErr").textContent = m.text; this.toast(m.text); }
         });
         net.on("close", () => { this.ol.room = null; refresh(); });
+        $("olMode").addEventListener("change", () => $("olSize").closest(".olField").classList.toggle("hidden", $("olMode").value === "duel"));
         $("olChatIn").addEventListener("keydown", (e) => {
             if (e.key !== "Enter") return;
             const text = e.target.value.trim();
@@ -331,6 +354,15 @@ export class Screens {
         d.textContent = text;
         document.body.appendChild(d);
         setTimeout(() => d.remove(), 4000);
+    }
+
+    olLineups() { return { ussr: Profile.lineup("ussr"), germany: Profile.lineup("germany") }; }
+
+    /** Сообщить серверу актуальные сетапы обеих наций (для входа в идущий бой) и сетап в комнате */
+    olPushLineups() {
+        if (!this.game.net.connected) return;
+        this.game.net.send({ t: "lineups", lineups: this.olLineups() });
+        this.olSyncLineup();
     }
 
     olMe() {
@@ -355,7 +387,12 @@ export class Screens {
         $("olErr").textContent = "";
         $("olConnectBtn").disabled = true;
         $("olStatus").textContent = "подключение…";
-        this.game.net.connect(normalizeServerUrl(raw), name)
+        // ключ игрока хранится в браузере: по нему сервер возвращает в бой с прежним сетапом и очками
+        if (!Profile.data.netToken) {
+            Profile.data.netToken = Array.from(crypto.getRandomValues(new Uint8Array(12)), (x) => x.toString(16).padStart(2, "0")).join("");
+            Profile.save();
+        }
+        this.game.net.connect(normalizeServerUrl(raw), name, { token: Profile.data.netToken, lineups: this.olLineups() })
             .then(() => { this.renderOnline(); })
             .catch((e) => { $("olErr").textContent = "Не удалось подключиться: " + e.message; this.renderOnline(); })
             .finally(() => { $("olConnectBtn").disabled = false; });
@@ -386,7 +423,7 @@ export class Screens {
         const mapName = (id) => (id === "random" ? "случайная карта" : MAPS[id] ? MAPS[id].name : id);
         $("olRooms").innerHTML = list.length ? list.map((r) => `
             <div class="olRoomRow">
-                <div><b>${esc(r.name)}</b><span>${esc(mapName(r.map))} · создатель ${esc(r.host)}</span></div>
+                <div><b>${esc(r.name)}</b><span>${r.mode === "duel" ? "дуэль 1 на 1" : "превосходство"} · ${esc(mapName(r.map))} · создатель ${esc(r.host)}</span></div>
                 <em class="${r.state === "battle" ? "live" : ""}">${r.state === "battle" ? "идёт бой" : "набор"} · ${r.players}/${r.max}</em>
                 <button class="ghost sm" data-act="olJoin" data-v="${esc(r.id)}">ВОЙТИ</button>
             </div>`).join("") : `<div class="olEmpty">Комнат пока нет — создайте свою</div>`;
@@ -398,6 +435,8 @@ export class Screens {
         }
         enhanceSelect(ms);
         enhanceSelect($("olSize"));
+        enhanceSelect($("olMode"));
+        $("olSize").closest(".olField").classList.toggle("hidden", $("olMode").value === "duel");
     }
 
     renderRoom(r) {
@@ -407,7 +446,7 @@ export class Screens {
         const S = r.settings;
         const mapName = S.map === "random" ? "случайная" : MAPS[S.map].name;
         $("olRoomTitle").textContent = r.name;
-        $("olRoomInfo").textContent = (r.state === "battle" ? "идёт бой · " : "") + `карта: ${mapName} · ${S.teamSize} × ${S.teamSize}`;
+        $("olRoomInfo").textContent = (r.state === "battle" ? "идёт бой · " : "") + (S.mode === "duel" ? "дуэль 1 на 1" : `превосходство ${S.teamSize} × ${S.teamSize}`) + ` · карта: ${mapName}`;
         for (const team of [0, 1]) {
             const nation = NATIONS[TEAM_NATION[team]];
             const mem = r.members.filter((m) => m.team === team);
@@ -417,7 +456,8 @@ export class Screens {
                 return `<div class="olMem ${m.id === net.id ? "me" : ""}">
                     <div class="olMemTop"><b>${m.id === r.host ? "★ " : ""}${esc(m.name)}</b>
                     <span class="${m.ready ? "ok" : ""}">${r.state === "battle" ? (m.inBattle ? "в бою" : "в лобби") : m.ready ? "готов" : "не готов"}</span></div>
-                    <div class="olLu">${veh.map((v) => `<img src="${this.game.hangar.thumbnail(v.id)}" alt="" title="${v.name}">`).join("") || "<i>нет сетапа</i>"}</div>
+                    <div class="olLu">${veh.map((v) => `<img src="${this.game.hangar.thumbnail(v.id)}" alt="" title="${v.name}">`).join("") || "<i>нет сетапа</i>"}
+                    ${m.id === net.id && r.state === "lobby" ? `<button class="ghost sm" data-act="olHangar" title="Изменить сетап в ангаре">ИЗМЕНИТЬ</button>` : ""}</div>
                 </div>`;
             }).join("");
             const canMove = me && me.team !== team && r.state === "lobby" && mem.length < S.teamSize;
@@ -429,14 +469,19 @@ export class Screens {
         if (host && r.state === "lobby") {
             if (!hs.dataset.built) {
                 hs.dataset.built = "1";
-                hs.innerHTML = `<label class="olField"><span>Карта</span><select id="olRMap"><option value="random">Случайная карта</option>${MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name}</option>`).join("")}</select></label>
+                hs.innerHTML = `<label class="olField"><span>Режим</span><select id="olRMode"><option value="domination">Превосходство</option><option value="duel">Дуэль 1 на 1</option></select></label>
+                    <label class="olField"><span>Карта</span><select id="olRMap"><option value="random">Случайная карта</option>${MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name}</option>`).join("")}</select></label>
                     <label class="olField"><span>Машин в команде</span><select id="olRSize">${[3, 4, 5, 6, 8].map((n) => `<option value="${n}">${n} × ${n}</option>`).join("")}</select></label>`;
-                const send = () => net.send({ t: "settings", map: $("olRMap").value, teamSize: +$("olRSize").value });
+                const send = () => net.send({ t: "settings", mode: $("olRMode").value, map: $("olRMap").value, teamSize: +$("olRSize").value });
+                $("olRMode").addEventListener("change", send);
                 $("olRMap").addEventListener("change", send);
                 $("olRSize").addEventListener("change", send);
             }
+            $("olRMode").value = S.mode || "domination";
+            enhanceSelect($("olRMode"));
             $("olRMap").value = S.map;
-            $("olRSize").value = String(S.teamSize);
+            $("olRSize").value = String(S.teamSize >= 3 ? S.teamSize : 6);
+            $("olRSize").closest(".olField").classList.toggle("hidden", S.mode === "duel");
             enhanceSelect($("olRMap"));
             enhanceSelect($("olRSize"));
             hs.classList.remove("hidden");
@@ -494,8 +539,9 @@ export class Screens {
         const o = this.spawnOpts || {};
         $("spTitle").textContent = o.title || "ВЫБОР ТЕХНИКИ";
         $("spTitle").className = o.dead ? "bad" : "";
-        $("spCause").innerHTML = (o.cause ? o.cause + "<br>" : "") + (b.mode === "range" ? "Полигон: любая машина бесплатно" : b.spawns === 0 ? "Первый выезд бесплатный. Следующие — за очки возрождения (ОВ): попадания, крит. повреждения, уничтожения, захват точек." : "Не хватает ОВ? Через " + 25 + " с после гибели неиспользованная машина выедет из резерва бесплатно.");
-        $("spSP").textContent = b.mode === "range" ? "∞" : b.sp;
+        const free = !!(b.modeCtl && b.modeCtl.freeSpawns);
+        $("spCause").innerHTML = (o.cause ? o.cause + "<br>" : "") + (b.mode === "range" ? "Полигон: любая машина бесплатно" : free ? "Дуэль: каждая машина сетапа выезжает один раз и бесплатно. Кончится техника — бой проигран." : b.spawns === 0 ? "Первый выезд бесплатный. Следующие — за очки возрождения (ОВ): попадания, крит. повреждения, уничтожения, захват точек." : "Не хватает ОВ? Через " + 25 + " с после гибели неиспользованная машина выедет из резерва бесплатно.");
+        $("spSP").textContent = b.mode === "range" ? "∞" : free ? "не нужны" : b.sp;
         $("spCards").innerHTML = b.lineup.map((l) => {
             const v = getVehicle(l.id);
             const c = b.canSpawn(l.id);
@@ -506,13 +552,14 @@ export class Screens {
         }).join("");
         $("spGo").disabled = !this.spawnSel || !b.canSpawn(this.spawnSel).ok;
         $("spNone").classList.toggle("hidden", b.hasSpawnsLeft());
+        $("spWatch").classList.toggle("hidden", b.mode === "range" || !this.game.specList().length);
     }
 
     /* ─────────── Итоги ─────────── */
     showResults(r, extra) {
         const s = r.stats;
-        $("resTitle").textContent = r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ";
-        $("resTitle").className = r.win ? "win" : "lose";
+        $("resTitle").textContent = r.draw ? "НИЧЬЯ" : r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ";
+        $("resTitle").className = r.draw ? "" : r.win ? "win" : "lose";
         $("resReason").textContent = r.reason || "";
         const rows = [
             ["Уничтожено", s.kills], ["Помощь", s.assists], ["Попаданий", s.hits + " / " + s.shots],

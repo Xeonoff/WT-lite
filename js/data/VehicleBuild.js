@@ -2,7 +2,7 @@ import { VEHICLES, CREW_SEATS, MODULE_NAMES } from "./Vehicles.js";
 import { SHELLS } from "./Shells.js";
 import { Config } from "../core/Config.js";
 import { KV1_SPEC } from "./models/KV1Spec.js";
-import { applyModel } from "./models/ModelBuild.js";
+import { applyModel, patchPart } from "./models/ModelBuild.js";
 
 /** Машины с детальной моделью: броня, модули и экипаж берутся из неё */
 const MODELS = { kv1: KV1_SPEC };
@@ -334,6 +334,39 @@ export function skirtSpan(def) {
     return { y0: th * 0.6, y1: Math.min(H - 0.12, th + 0.3) };
 }
 
+/**
+ * Ослабленные зоны процедурной машины: на листе мехвода — смотровой прибор и шаровая установка
+ * курсового пулемёта (если есть стрелок-радист), на башне — командирская башенка.
+ */
+function weakZones(def, prof) {
+    const out = [];
+    const A = def.armor.hull, T = def.turret;
+    const i = Math.max(0, prof.labels.indexOf("front"));
+    const P0 = prof.front[i], P1 = prof.front[i + 1];
+    const dx = P1[0] - P0[0], dy = P1[1] - P0[1], L = Math.hypot(dx, dy);
+    const mm = (A[prof.labels[i]] || A.front)[0];
+    if (L > 0.25) {
+        const n = [-dy / L, dx / L, 0];
+        const at = (f, z) => [P0[0] + dx * f, P0[1] + dy * f, z];
+        const drv = def.seats.driver, rad = def.seats.radio;
+        // у машин, где мехвод смотрел только через перископы, смотрового прибора в листе нет
+        if (drv && !(def.details && def.details.noVisor)) out.push(patchPart({ frame: "hull", id: "hull", c: at(0.32, drv.c[2]), n, u: [0, 0, 1], w: 0.3, h: Math.min(0.12, L * 0.3), mm: Math.round(mm * 0.6), name: "смотровой прибор мехвода" }));
+        if (rad) out.push(patchPart({ frame: "hull", id: "hull", c: at(0.42, rad.c[2]), n, u: [0, 0, 1], w: 0.22, h: Math.min(0.22, L * 0.45), mm: Math.round(mm * 0.65), name: "шаровая установка пулемёта", round: true }));
+    }
+    if (def.details && def.details.cupola && !T.open) {
+        const cs = def.seats.commander;
+        const cx = cs ? cs.c[0] * 0.9 : -T.hl * 0.45, cz = cs ? cs.c[2] * 0.9 : -T.hw * 0.27;
+        const poly = [];
+        for (let k = 0; k < 8; k++) { const a = (k + 0.5) / 8 * Math.PI * 2; poly.push([cx + Math.cos(a) * 0.32, cz + Math.sin(a) * 0.32]); }
+        const mmC = Math.round(Math.min(def.armor.turret.side[0] * 0.8, 60));
+        out.push({
+            id: "turret", frame: "turret", kind: "convex", plate: { zone: "weak", mm: mmC, name: "командирская башенка", weak: true },
+            planes: prismPlanes(poly, () => "weak", 0, 2, 1, T.h - 0.02, T.h + 0.19, ["weak", "weak"]),
+        });
+    }
+    return out;
+}
+
 function buildParts(def, prof) {
     const { L, W, H, tw, th } = def.dims;
     const iw = W - 2 * tw;
@@ -355,6 +388,7 @@ function buildParts(def, prof) {
         id: "hull", frame: "hull", kind: "box", min: [rb, BELLY, -iw / 2], max: [fb, CLEARANCE, iw / 2], sideSlope: 0,
         faceMap: { front: "lower", rear: "rear", roof: "bottom" },
     });
+    parts.push(...weakZones(def, prof));
     const tPoly = turretSlopeRing(def, 0.5);
     parts.push({
         id: "turret", frame: "turret", kind: "convex",
@@ -402,6 +436,9 @@ function prepare(id, def) {
         def.turretPoly = convexHull(def.turretOutline);
     }
     def.gun.mag = def.gun.mag || 1;
+    def.gun.elev = def.gun.elev || [-6, 20];
+    // скорость вертикальной наводки, °/с: лёгкие быстрее, тяжёлые и ПТ — медленнее
+    def.gun.elevRate = def.gun.elevRate || { light: 9, medium: 7, heavy: 5, td: 4.5 }[def.role] || 6;
     def.gun.rof = def.gun.rof || 0;
     // Боекомплект и стеллажи
     def.ammoTotal = def.shells.reduce((s, [, n]) => s + n, 0);

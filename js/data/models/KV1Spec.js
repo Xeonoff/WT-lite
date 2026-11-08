@@ -272,8 +272,29 @@ export const CREW = [
     { id: "loader", role: "loader", parent: "turret", pos: [0.46, -0.34, -0.62], rotY: -Math.PI / 2 + 0.3, pose: "turretSeat" },
 ];
 
+/**
+ * Ослабленные зоны (координаты модели): смотровые приборы, шаровые установки, люки, пистолетные порты.
+ * c — точка на листе, n — наружная нормаль листа, u — направление ширины.
+ */
+export function weakZones() {
+    const upperZ = (y) => H.upperBottomZ - (y - H.sponson) * ((H.upperBottomZ - H.roofFrontZ) / (H.roof - H.sponson));
+    const nUp = [0, Math.sin(30 * DEG), Math.cos(30 * DEG)];
+    const out = [
+        { name: "смотровой прибор мехвода", parent: "hull", c: [0, 1.46, upperZ(1.46)], n: nUp, u: [1, 0, 0], w: 0.34, h: 0.15, mm: 40 },
+        { name: "шаровая установка ДТ", parent: "hull", c: [0.40, 1.44, upperZ(1.44)], n: nUp, u: [1, 0, 0], w: 0.23, h: 0.23, mm: 45, round: true },
+        { name: "люк стрелка-радиста", parent: "hull", c: [0.45, H.roof, 1.93], n: [0, 1, 0], u: [1, 0, 0], w: 0.54, h: 0.54, mm: 30, round: true },
+        { name: "люк командира", parent: "turret", c: [-0.36, TURRET_PROFILE[1][1], -0.45], n: [0, 1, 0], u: [1, 0, 0], w: 0.54, h: 0.54, mm: 30, round: true },
+    ];
+    for (const s of [1, -1]) {
+        const ns = [s * Math.cos(15 * DEG), Math.sin(15 * DEG), 0];
+        out.push({ name: "смотровой прибор башни", parent: "turret", c: [s * turretHalfWidth(0.56), 0.56, 0.05], n: ns, u: [0, 0, 1], w: 0.24, h: 0.09, mm: 30 });
+        out.push({ name: "пистолетный порт", parent: "turret", c: [s * turretHalfWidth(0.42), 0.42, -0.72], n: ns, u: [0, 0, 1], w: 0.1, h: 0.1, mm: 25, round: true });
+    }
+    return out;
+}
+
 export const KV1_SPEC = {
     id: "kv1", dims: KV1_DIMENSIONS, zones: ARMOR_ZONES, H, TRACK, ROAD, IDLER, SPROCKET, RETURN,
     gunPivot: GUN_PIVOT, muzzle: MUZZLE_Z, barrel: BARREL, turretProfile: TURRET_PROFILE, turretHalfWidth,
-    plates: armorPlates, modules: MODULES, crew: CREW,
+    plates: armorPlates, modules: MODULES, crew: CREW, weakZones: weakZones(),
 };

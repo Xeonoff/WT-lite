@@ -366,14 +366,18 @@ export function heSplash(battle, wp, s, shooter, directTarget) {
         const bpos = frameToHull(v, "gun", [v.def.gun.len * 0.6, 0, 0]);
         const db = Math.hypot(bpos[0] - pl[0], bpos[1] - pl[1], bpos[2] - pl[2]);
         if (db < R * 0.45) hurtModule(ctx, bm, 70 * (1 - db / (R * 0.45)), "blast");
-        // избыточное давление через крышу / открытую рубку
+        // избыточное давление через крышу / открытую рубку — только если разрыв на уровне крыши или выше
         const hullD = distToHull(v, pl);
-        if (hullD < R) {
+        const T = v.def.turret, H = v.def.dims.H;
+        const tdx = pl[0] - T.x, tdz = pl[2];
+        const overTurret = Math.abs(tdx) < T.hl + 0.2 && Math.abs(tdz) < T.hw + 0.2;
+        const atRoof = T.open || (overTurret ? pl[1] > H + T.h * 0.65 : pl[1] > H - 0.25);
+        if (hullD < R && atRoof) {
             const fall = 1 - hullD / R;
             const heP = s.pen[0] * fall;
-            const roof = v.def.turret.open ? 0 : Math.min(v.def.armor.hull.roof[0], v.def.armor.turret.roof[0]);
-            if (heP > roof * 0.9 || (v.def.turret.open && fall > 0.25)) {
-                const frac = clamp(((heP - roof * 0.9) / Math.max(8, s.pen[0])) + (v.def.turret.open ? 0.35 : 0), 0.12, 0.85);
+            const roof = T.open ? 0 : Math.min(v.def.armor.hull.roof[0], v.def.armor.turret.roof[0]);
+            if (heP > roof * 0.9 || (T.open && fall > 0.25)) {
+                const frac = clamp(((heP - roof * 0.9) / Math.max(8, s.pen[0])) * 0.8 + (T.open ? 0.35 : 0), 0.1, 0.65);
                 const targets = interiorTargets(v);
                 const p = [clamp(pl[0], -v.def.dims.L / 2 + 0.3, v.def.dims.L / 2 - 0.3), v.def.dims.H - 0.15, clamp(pl[2], -v.def.dims.W / 2 + 0.6, v.def.dims.W / 2 - 0.6)];
                 explodeInside(ctx, targets, p, bp, frac * fall);
