@@ -4,7 +4,7 @@
  */
 import { SHELLS } from "../data/Shells.js";
 
-export const PROTO_VERSION = 2;
+export const PROTO_VERSION = 3;
 export const TICK_HZ = 30;          // шаг симуляции на сервере
 export const SNAP_EVERY = 2;        // снимок состояния — каждый второй шаг (15 Гц)
 export const SNAP_HZ = TICK_HZ / SNAP_EVERY;
@@ -22,6 +22,8 @@ export function cleanName(s) {
 }
 
 /* ─────────── Краткое состояние машины (все видимые машины) ─────────── */
+/** Станции босса, чьи углы видны другим (пулемёты неподвижны) */
+export const STATIONS_NET = ["t2", "flak_l", "flak_r"];
 // флаги
 export const F_DEAD = 1, F_FIRE = 2, F_SPOTTED = 4, F_REPAIR = 8, F_SMOKE = 16;
 
@@ -31,8 +33,11 @@ export function packVehicle(v, viewTeam) {
     if (v.fire) f |= F_FIRE;
     if (v.visible[1 - v.team]) f |= F_SPOTTED;
     if (v.repair) f |= F_REPAIR;
-    if (v.mods.engine.hp < v.mods.engine.maxHp * 0.35) f |= F_SMOKE;
-    return [v.id, r2(v.x), r2(v.z), r3(v.a), r2(v.v), r3(v.w), r3(v.tr), f, v.input.throttle, v.input.steer, r3(v.gp)];
+    if (v.mods.engine && v.mods.engine.hp < v.mods.engine.maxHp * 0.35) f |= F_SMOKE;
+    const a = [v.id, r2(v.x), r2(v.z), r3(v.a), r2(v.v), r3(v.w), r3(v.tr), f, v.input.throttle, v.input.steer, r3(v.gp)];
+    // станции вооружения босса: курс и угол возвышения кормовой башни и зениток
+    if (v.stn) a.push(STATIONS_NET.map((k) => [r3(v.stn[k].yaw), r3(v.stn[k].pitch)]));
+    return a;
 }
 
 /** Полное внутреннее состояние своей машины (для HUD: экипаж, модули, БК, перезарядка) */
@@ -44,7 +49,8 @@ export function packOwn(v) {
         c: v.crew.map((c) => [c.home, c.seat, r1(c.hp), c.alive ? 1 : 0, c.transit ? 1 : 0]),
         s: d.crew.map((s) => (v.seats[s].occupant ? ci(v.seats[s].occupant) : -1)),
         sw: v.swap ? [ci(v.swap.member), v.swap.from, v.swap.to, r2(v.swap.t), v.swap.dur] : null,
-        am: d.shellIds.map((sid) => v.ammo[sid]),
+        x: v.extra || null,
+        am: v.shellIds().map((sid) => v.ammo[sid]),
         rl: Object.keys(v.racksLost),
         sh: v.shell, ld: v.loaded, mg: v.mag, r: r2(v.reload), rt: r2(v.reloadTotal),
         fi: v.fire ? { pos: rv(v.fire.pos), t: r1(v.fire.t), dur: r1(v.fire.dur) } : null,
@@ -64,7 +70,8 @@ export function applyOwn(v, s) {
     });
     d.crew.forEach((name, i) => { v.seats[name].occupant = s.s[i] >= 0 ? v.crew[s.s[i]] : null; });
     v.swap = s.sw ? { member: v.crew[s.sw[0]], from: s.sw[1], to: s.sw[2], t: s.sw[3], dur: s.sw[4] } : null;
-    d.shellIds.forEach((sid, i) => { v.ammo[sid] = s.am[i]; });
+    v.extra = s.x && s.x.length ? s.x.slice() : null;
+    v.shellIds().forEach((sid, i) => { v.ammo[sid] = s.am[i]; });
     v.racksLost = {};
     for (const id of s.rl) v.racksLost[id] = true;
     v.shell = s.sh; v.loaded = s.ld; v.mag = s.mg; v.reload = s.r; v.reloadTotal = s.rt;
@@ -99,6 +106,6 @@ export function packShot(s) {
 }
 
 /* ─────────── Разрушения мира ─────────── */
-export const WORLD_LISTS = { tree: "trees", fence: "fences", hay: "hay", hedge: "hedges" };
+export const WORLD_LISTS = { tree: "trees", fence: "fences", hay: "hay", hedge: "hedges", building: "buildings" };
 
 export { rv, rd, r2, r3 };

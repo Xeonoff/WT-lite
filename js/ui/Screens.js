@@ -12,9 +12,11 @@ import { enhanceSelect } from "./Dropdown.js";
 import { ARMOR_SCALE } from "../render/ArmorView.js";
 import { defaultServerUrl, normalizeServerUrl } from "../net/NetClient.js";
 import { MODULE_CATEGORIES as KV1_CATEGORIES, CREW_ROLES as KV1_CREW } from "../data/models/KV1Spec.js";
+import { MODULE_CATEGORIES as RATTE_CATEGORIES, CREW_ROLES as RATTE_CREW, SPEC_ROWS as RATTE_ROWS } from "../data/models/RatteSpec.js";
+import { BOSSES } from "../data/Vehicles.js";
 
 /** Легенда режима «Модули» для машин с детальной моделью */
-const DETAILED_LEGEND = { kv1: { cats: KV1_CATEGORIES, crew: KV1_CREW } };
+const DETAILED_LEGEND = { kv1: { cats: KV1_CATEGORIES, crew: KV1_CREW }, ratte: { cats: RATTE_CATEGORIES, crew: RATTE_CREW } };
 
 const TEAM_NATION = ["ussr", "germany"];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -149,7 +151,7 @@ export class Screens {
             `<span class="chipx ${n.id === nation ? "on" : ""}" data-act="nation" data-v="${n.id}">${n.name} · <b>${d.rp[n.id]}</b> ОИ</span>`).join("") +
             `<span class="chipx stat">боёв <b>${d.stats.battles}</b> · побед <b>${d.stats.wins}</b> · уничтожено <b>${d.stats.kills}</b> · рекорд волн <b>${d.bestWave}</b></span>`;
         $("modeCards").innerHTML = Object.entries(MODES).map(([id, m]) =>
-            `<div class="card mode ${this.sel.mode === id ? "on" : ""}" data-act="mode" data-v="${id}"><div class="mn">${m.name}</div><div class="ms">${m.short}</div><div class="md">${m.desc}</div></div>`).join("");
+            `<div class="card mode ${m.boss ? "boss" : ""} ${this.sel.mode === id ? "on" : ""}" data-act="mode" data-v="${id}"><div class="mn">${m.name}</div><div class="ms">${m.short}</div><div class="md">${m.desc}</div></div>`).join("");
         const ms = $("mapSel");
         ms.innerHTML = `<option value="random">Случайная карта</option>` + MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name} · ${MAPS[id].biome === "summer" ? "лето" : MAPS[id].biome === "winter" ? "зима" : "пустыня"}</option>`).join("");
         ms.value = this.sel.map;
@@ -219,6 +221,13 @@ export class Screens {
             }
             html += `</div>`;
         }
+        // боссы нации: только осмотр (модель, броня, модули) — в бою встречаются в «Битве с боссом»
+        const bosses = Object.values(BOSSES).filter((v) => v.nation === nation);
+        if (bosses.length) {
+            html += `<div class="trow bossrow"><div class="rk boss">☠<small>босс</small></div><div class="tcell wide">` + bosses.map((v) =>
+                `<div class="tcard boss ${this.hangarSel === v.id ? "on" : ""}" data-act="hSel" data-v="${v.id}">
+                    <img src="${this.game.hangar.thumbnail(v.id)}" alt=""><b>${v.name}</b><span>осмотр · «Битва с боссом»</span></div>`).join("") + `</div></div>`;
+        }
         $("tree").innerHTML = html;
         if (!this.hangarSel || getVehicle(this.hangarSel).nation !== nation) this.hangarSel = lineup[0] || list[0].id;
         this.renderDetail(this.hangarSel);
@@ -228,11 +237,12 @@ export class Screens {
         }).join("");
         this.game.hangar.show(this.hangarSel);
         if (this.hMode === "modules") this.setHangarMode("modules");
-        d.lastVehicle[nation] = this.hangarSel;
+        if (!getVehicle(this.hangarSel).boss) d.lastVehicle[nation] = this.hangarSel;
     }
 
     renderDetail(id) {
         const v = getVehicle(id);
+        if (v.boss) { this.renderBossDetail(v); return; }
         const res = Profile.isResearched(id);
         const inL = Profile.lineup(v.nation).includes(id);
         const A = v.armor;
@@ -267,6 +277,24 @@ export class Screens {
         const g = cv.getContext("2d");
         g.setTransform(2, 0, 0, 2, 0, 0);
         drawScheme(g, { def: v, snap: freshSnap(v), x: 0, y: 0, w: 340, h: 130, labels: true });
+    }
+
+    /** Карточка босса: описание, ТТХ, слабые места — без исследования и сетапа */
+    renderBossDetail(v) {
+        const weak = [...new Set(v.parts.filter((p) => p.weak).map((p) => (p.plate ? p.plate.name : p.weakName) + " — " + (p.plate ? p.plate.mm : p.plates.front.mm) + " мм"))];
+        $("hDetail").innerHTML = `
+            <div class="dh"><div><h2>${v.name}</h2><div class="sub">${NATIONS[v.nation].name} · босс · проект Krupp 1942 г.</div></div></div>
+            <p class="desc">${v.desc}</p>
+            <canvas id="hScheme" width="680" height="260"></canvas>
+            <table class="stats">${RATTE_ROWS.map(([k, t]) => `<tr><th>${k}</th><td>${t}</td></tr>`).join("")}
+                <tr><th>В игре</th><td>${v.mob.speed} км/ч · главный калибр — залп раз в ${v.gun.reload} с · экипаж ${v.crew.length}, без ${v.minCrew - 1} последних машина потеряна</td></tr>
+            </table>
+            <div class="note"><b>Слабые места:</b> ${weak.join(" · ")}. Корма и скосы — 150 мм, борт над гусеницами — 200 мм, лоб — 300–360 мм. Гусеницы прикрыты 100-мм экранами.</div>
+            <div class="note">Встречается в режиме «Битва с боссом» (одиночный бой и онлайн). Включите «Броня» и «Модули» над моделью — там видны листы, погреба, двигатели и все 20 мест экипажа.</div>`;
+        const cv = $("hScheme");
+        const g = cv.getContext("2d");
+        g.setTransform(2, 0, 0, 2, 0, 0);
+        drawScheme(g, { def: v, snap: freshSnap(v), x: 0, y: 0, w: 340, h: 130, labels: false });
     }
 
     /* ─────────── Осмотр машины: режимы и подсказка по броне ─────────── */
@@ -339,7 +367,12 @@ export class Screens {
             if (this.current === "onlineScr") { $("olErr").textContent = m.text; this.toast(m.text); }
         });
         net.on("close", () => { this.ol.room = null; refresh(); });
-        $("olMode").addEventListener("change", () => $("olSize").closest(".olField").classList.toggle("hidden", $("olMode").value === "duel"));
+        $("olMode").addEventListener("change", () => {
+            const md = $("olMode").value;
+            $("olSize").closest(".olField").classList.toggle("hidden", md === "duel");
+            $("olSizeL").textContent = md === "boss" ? "Игроков (все против «Ратте»)" : "Машин в команде";
+            if (md === "boss" && +$("olSize").value > 4) { $("olSize").value = "4"; enhanceSelect($("olSize")); }
+        });
         $("olChatIn").addEventListener("keydown", (e) => {
             if (e.key !== "Enter") return;
             const text = e.target.value.trim();
@@ -423,14 +456,14 @@ export class Screens {
         const mapName = (id) => (id === "random" ? "случайная карта" : MAPS[id] ? MAPS[id].name : id);
         $("olRooms").innerHTML = list.length ? list.map((r) => `
             <div class="olRoomRow">
-                <div><b>${esc(r.name)}</b><span>${r.mode === "duel" ? "дуэль 1 на 1" : "превосходство"} · ${esc(mapName(r.map))} · создатель ${esc(r.host)}</span></div>
+                <div><b>${esc(r.name)}</b><span>${r.mode === "duel" ? "дуэль 1 на 1" : r.mode === "boss" ? "битва с «Ратте»" : "превосходство"} · ${esc(mapName(r.map))} · создатель ${esc(r.host)}</span></div>
                 <em class="${r.state === "battle" ? "live" : ""}">${r.state === "battle" ? "идёт бой" : "набор"} · ${r.players}/${r.max}</em>
                 <button class="ghost sm" data-act="olJoin" data-v="${esc(r.id)}">ВОЙТИ</button>
             </div>`).join("") : `<div class="olEmpty">Комнат пока нет — создайте свою</div>`;
         const ms = $("olMap");
         if (!ms.options.length) {
             ms.innerHTML = `<option value="random">Случайная карта</option>` + MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name}</option>`).join("");
-            $("olSize").innerHTML = [3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${n === 6 ? "selected" : ""}>${n} × ${n}</option>`).join("");
+            $("olSize").innerHTML = [2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${n === 6 ? "selected" : ""}>${n}</option>`).join("");
             if (!$("olRoomName").value) $("olRoomName").value = "Бой " + (this.game.net.name || "");
         }
         enhanceSelect(ms);
@@ -446,11 +479,12 @@ export class Screens {
         const S = r.settings;
         const mapName = S.map === "random" ? "случайная" : MAPS[S.map].name;
         $("olRoomTitle").textContent = r.name;
-        $("olRoomInfo").textContent = (r.state === "battle" ? "идёт бой · " : "") + (S.mode === "duel" ? "дуэль 1 на 1" : `превосходство ${S.teamSize} × ${S.teamSize}`) + ` · карта: ${mapName}`;
+        const boss = S.mode === "boss";
+        $("olRoomInfo").textContent = (r.state === "battle" ? "идёт бой · " : "") + (S.mode === "duel" ? "дуэль 1 на 1" : boss ? `битва с «Ратте» · до ${S.teamSize} игроков` : `превосходство ${S.teamSize} × ${S.teamSize}`) + ` · карта: ${mapName}`;
         for (const team of [0, 1]) {
             const nation = NATIONS[TEAM_NATION[team]];
             const mem = r.members.filter((m) => m.team === team);
-            const bots = Math.max(0, S.teamSize - mem.length);
+            const bots = boss ? 0 : Math.max(0, S.teamSize - mem.length);
             const rows = mem.map((m) => {
                 const veh = m.lineup.map((id) => getVehicle(id)).filter(Boolean);
                 return `<div class="olMem ${m.id === net.id ? "me" : ""}">
@@ -460,18 +494,18 @@ export class Screens {
                     ${m.id === net.id && r.state === "lobby" ? `<button class="ghost sm" data-act="olHangar" title="Изменить сетап в ангаре">ИЗМЕНИТЬ</button>` : ""}</div>
                 </div>`;
             }).join("");
-            const canMove = me && me.team !== team && r.state === "lobby" && mem.length < S.teamSize;
+            const canMove = me && me.team !== team && r.state === "lobby" && (boss || mem.length < S.teamSize);
             $("olTeam" + team).className = "olTeam " + (me && me.team === team ? "mine" : "");
-            $("olTeam" + team).innerHTML = `<div class="olTeamHead"><b>${nation.name}</b><span>${mem.length} игр. · ${bots} бот.</span>
+            $("olTeam" + team).innerHTML = `<div class="olTeamHead"><b>${nation.name}</b><span>${boss ? `сетап этой нации · ${mem.length} игр.` : `${mem.length} игр. · ${bots} бот.`}</span>
                 ${canMove ? `<button class="ghost sm" data-act="olTeam" data-v="${team}">ПЕРЕЙТИ</button>` : ""}</div>${rows}`;
         }
         const hs = $("olHostSet");
         if (host && r.state === "lobby") {
             if (!hs.dataset.built) {
                 hs.dataset.built = "1";
-                hs.innerHTML = `<label class="olField"><span>Режим</span><select id="olRMode"><option value="domination">Превосходство</option><option value="duel">Дуэль 1 на 1</option></select></label>
+                hs.innerHTML = `<label class="olField"><span>Режим</span><select id="olRMode"><option value="domination">Превосходство</option><option value="duel">Дуэль 1 на 1</option><option value="boss">Битва с боссом «Ратте»</option></select></label>
                     <label class="olField"><span>Карта</span><select id="olRMap"><option value="random">Случайная карта</option>${MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name}</option>`).join("")}</select></label>
-                    <label class="olField"><span>Машин в команде</span><select id="olRSize">${[3, 4, 5, 6, 8].map((n) => `<option value="${n}">${n} × ${n}</option>`).join("")}</select></label>`;
+                    <label class="olField"><span id="olRSizeL">Машин в команде</span><select id="olRSize">${[2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}">${n}</option>`).join("")}</select></label>`;
                 const send = () => net.send({ t: "settings", mode: $("olRMode").value, map: $("olRMap").value, teamSize: +$("olRSize").value });
                 $("olRMode").addEventListener("change", send);
                 $("olRMap").addEventListener("change", send);
@@ -480,7 +514,8 @@ export class Screens {
             $("olRMode").value = S.mode || "domination";
             enhanceSelect($("olRMode"));
             $("olRMap").value = S.map;
-            $("olRSize").value = String(S.teamSize >= 3 ? S.teamSize : 6);
+            $("olRSize").value = String(S.teamSize >= 2 ? S.teamSize : 6);
+            $("olRSizeL").textContent = boss ? "Игроков (все против «Ратте»)" : "Машин в команде";
             $("olRSize").closest(".olField").classList.toggle("hidden", S.mode === "duel");
             enhanceSelect($("olRMap"));
             enhanceSelect($("olRSize"));
@@ -540,7 +575,7 @@ export class Screens {
         $("spTitle").textContent = o.title || "ВЫБОР ТЕХНИКИ";
         $("spTitle").className = o.dead ? "bad" : "";
         const free = !!(b.modeCtl && b.modeCtl.freeSpawns);
-        $("spCause").innerHTML = (o.cause ? o.cause + "<br>" : "") + (b.mode === "range" ? "Полигон: любая машина бесплатно" : free ? "Дуэль: каждая машина сетапа выезжает один раз и бесплатно. Кончится техника — бой проигран." : b.spawns === 0 ? "Первый выезд бесплатный. Следующие — за очки возрождения (ОВ): попадания, крит. повреждения, уничтожения, захват точек." : "Не хватает ОВ? Через " + 25 + " с после гибели неиспользованная машина выедет из резерва бесплатно.");
+        $("spCause").innerHTML = (o.cause ? o.cause + "<br>" : "") + (b.mode === "range" ? "Полигон: любая машина бесплатно" : b.mode === "boss" ? "Битва с боссом: каждая машина сетапа выезжает один раз и бесплатно. Остановите «Ратте», пока он не дошёл до штаба." : free ? "Дуэль: каждая машина сетапа выезжает один раз и бесплатно. Кончится техника — бой проигран." : b.spawns === 0 ? "Первый выезд бесплатный. Следующие — за очки возрождения (ОВ): попадания, крит. повреждения, уничтожения, захват точек." : "Не хватает ОВ? Через " + 25 + " с после гибели неиспользованная машина выедет из резерва бесплатно.");
         $("spSP").textContent = b.mode === "range" ? "∞" : free ? "не нужны" : b.sp;
         $("spCards").innerHTML = b.lineup.map((l) => {
             const v = getVehicle(l.id);

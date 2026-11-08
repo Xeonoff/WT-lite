@@ -340,10 +340,11 @@ export class Game {
         I.on("KeyM", () => { const m = this.audio.toggleMute(); this.hud.log(m ? "Звук выключен" : "Звук включён"); });
         I.on("KeyH", () => { this.hintsOff = !this.hintsOff; this.applyHints(); });
         I.on("F1", () => { this.screens.refTab = "controls"; this.screens.openModal("refScr"); if (this.state === "battle") this.pause(); });
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 5; i++) {
             I.on("Digit" + (i + 1), () => {
                 const p = player();
-                if (p && p.def.shellIds[i]) this.selectShell(p.def.shellIds[i]);
+                const ids = p && p.shellIds();
+                if (ids && ids[i]) this.selectShell(ids[i]);
             });
         }
         I.on("KeyR", () => {
@@ -384,7 +385,7 @@ export class Game {
             if (Settings.get("wheel") === "shell") {
                 const p = player();
                 if (!p) return;
-                const ids = p.def.shellIds;
+                const ids = p.shellIds();
                 const i = ids.indexOf(p.shell);
                 this.selectShell(ids[(i + (dy > 0 ? 1 : ids.length - 1)) % ids.length]);
             } else this.zoomStep(dy < 0 ? 1 : -1);
@@ -535,7 +536,7 @@ export class Game {
             return;
         }
         // камера вида сзади зависит от направления взгляда — несколько приближений
-        const d = p.def, P = [p.x, d.dims.H + d.turret.h + 0.9, p.z];
+        const d = p.def, P = [p.x, (p.y || 0) + d.dims.H + d.turret.h + 0.9, p.z];
         for (let i = 0; i < 4; i++) {
             const cy = Math.cos(this.look.pitch), D = [cy * Math.cos(this.look.yaw), Math.sin(this.look.pitch), cy * Math.sin(this.look.yaw)];
             aimFrom([P[0] - D[0] * this.tpDist, Math.max(1.1, P[1] - D[1] * this.tpDist + 0.7), P[2] - D[2] * this.tpDist]);
@@ -627,7 +628,7 @@ export class Game {
         const d = p.def;
         const view = {
             t: this.camTs, yaw: this.look.yaw, pitch: this.look.pitch, dist: this.tpDist,
-            pivot: [p.x, d.dims.H + d.turret.h + 0.9, p.z], sight: null,
+            pivot: [p.x, (p.y || 0) + d.dims.H + d.turret.h + 0.9, p.z], sight: null,
         };
         if (this.sightOn()) {
             // прицел наводчика — слева от орудия, над осью цапф
@@ -680,9 +681,10 @@ export class Game {
             if (v === p) continue;
             if (!v.dead && v.team !== p.team && !v.visible[p.team]) continue;
             // широкая фаза: расстояние от луча до центра машины
-            const cx = v.x - ray.o[0], cy = 1.2 - ray.o[1], cz = v.z - ray.o[2];
+            const vy = (v.y || 0) + 1.2;
+            const cx = v.x - ray.o[0], cy = vy - ray.o[1], cz = v.z - ray.o[2];
             const t = cx * ray.d[0] + cy * ray.d[1] + cz * ray.d[2];
-            const px = ray.o[0] + ray.d[0] * t - v.x, py = ray.o[1] + ray.d[1] * t - 1.2, pz = ray.o[2] + ray.d[2] * t - v.z;
+            const px = ray.o[0] + ray.d[0] * t - v.x, py = ray.o[1] + ray.d[1] * t - vy, pz = ray.o[2] + ray.d[2] * t - v.z;
             if (px * px + py * py + pz * pz > (v.def.radius + 1.5) ** 2) continue;
             const hit = raycastVehicle(v, ray.o, ray.d, 5000);
             if (hit && (!best || hit.t < best.hit.t)) best = { v, hit };
@@ -696,7 +698,7 @@ export class Game {
             else if (id === "barrel") y = d.muzzleY;
             else y = Math.min(d.dims.H * 0.4, d.dims.th * 0.55);
             // сверху луч камеры попадает в крышу — целимся в середину детали; сбоку — в точку под прицелом
-            aim.point = tp ? best.hit.world.slice() : [best.hit.world[0], y, best.hit.world[2]];
+            aim.point = tp ? best.hit.world.slice() : [best.hit.world[0], (v.y || 0) + y, best.hit.world[2]];
             aim.cursor = best.hit.world;
             aim.ground = null;
             aim.target = v;
@@ -721,7 +723,8 @@ export class Game {
                 const dx = gp[0] - p.x, dz = gp[2] - p.z;
                 const dd = Math.hypot(dx, dz) || 1;
                 const ext = Math.max(dd, 70);
-                aim.point = [p.x + dx / dd * ext, 1.1, p.z + dz / dd * ext];
+                const ax = p.x + dx / dd * ext, az = p.z + dz / dd * ext;
+                aim.point = [ax, b.world.h(ax, az) + 1.1, az];
                 aim.dist = dd;
                 aim.ground = gp;
                 aim.cursor = gp;
@@ -768,7 +771,9 @@ export class Game {
         const dx = aim.point[0] - mz[0], dz = aim.point[2] - mz[2];
         const hd = Math.hypot(dx, dz);
         if (hd < 6) return null;
-        const pitch = this.battle.wantPitch(p);
+        // направление на точку прицеливания; если орудие упрётся в углы наводки — с поправкой на недостающий угол
+        const b = this.battle;
+        const pitch = Math.atan2(aim.point[1] - mz[1], hd) + (b.wantPitch(p) - b.wantPitchRaw(p));
         const dir = [Math.cos(pitch) * dx / hd, Math.sin(pitch), Math.cos(pitch) * dz / hd];
         const want = Math.hypot(goal[0] - mz[0], goal[2] - mz[2]) / Math.cos(pitch);
         const hit = probeShot(this.battle, p, mz, dir, want + 3);
@@ -778,9 +783,9 @@ export class Game {
             if (hit.v === aim.target || hit.v.team !== p.team) return null;
             what = "союзник";
         } else if (hit.kind === "ground") {
-            // по земле у цели — не препятствие: выстрел просто уходит в грунт за ней
-            if (!aim.target || hit.t > want * 0.9) return null;
-            what = "грунт";
+            // по земле у цели — не препятствие: выстрел просто уходит в грунт за ней; гребень на пути — препятствие
+            if (hit.t > want * (aim.target ? 0.9 : 0.85)) return null;
+            what = aim.target ? "грунт" : "склон";
         } else if (hit.kind === "wreck" && hit.o.v === aim.target) return null;
         else what = { building: "здание", wreck: "подбитая машина", rock: "скала" }[hit.kind] || "препятствие";
         return { point: hit.point, what, dist: hit.t };
@@ -905,6 +910,22 @@ export class Game {
             }
         });
         Events.on("artyShell", (e) => { if (B()) this.audio.whistle(e.x, e.z); });
+        // битва с боссом: сводки о состоянии «Ратте» и предупреждение о наводке главного калибра
+        Events.on("bossNote", (e) => { if (B()) this.hud.log("«Ратте»: " + e.text, e.kind === "good" ? "good" : e.kind === "bad" ? "bad" : e.kind === "swap" ? "swap" : "warn", 6000); });
+        Events.on("pickup", (e) => {
+            const b = B();
+            if (!b || e.v !== b.player) return;
+            const s = SHELLS[e.id];
+            this.hud.log(`Трофей: +${e.n} × «${s ? s.name : "кумулятивный"}» (${s ? s.pen[0] : "—"} мм, сильное заброневое действие) — клавиша ${e.v.shellIds().indexOf(e.id) + 1}`, "good", 7000);
+            this.audio.ui("good");
+        });
+        Events.on("bossAim", (e) => {
+            const b = B();
+            if (!b || e.target !== b.player) return;
+            this.hud.log("⚠ ГЛАВНЫЙ КАЛИБР «РАТТЕ» НАВОДИТСЯ НА ВАС — уходите из-под прицела или за укрытие!", "fire", 4000);
+            this.audio.ui("bad");
+            this.vignette(0.55);
+        });
         Events.on("waveStart", (e) => this.hud.banner("ВОЛНА " + e.n, "противников: " + e.count));
         Events.on("waveClear", (e) => { this.hud.banner("ВОЛНА " + e.n + " ОТБИТА", "полевой ремонт и пополнение"); this.audio.ui("good"); });
         Events.on("playerSpawn", (e) => { const b = B(); if (b && b.net && e.v === b.player) this.afterSpawn(e.v); });

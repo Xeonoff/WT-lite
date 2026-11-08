@@ -108,6 +108,16 @@ export const SHELLS = {
     // гаубичная артиллерия поддержки
     arty122: { name: "М-30 · ОФ-462", type: "HE", cal: 122, pen: [24, 24], vel: 515, filler: 3000 },
     arty105: { name: "leFH 18 · Sprgr", type: "HE", cal: 105, pen: [20, 20], vel: 470, filler: 2200 },
+    // 203 мм Б-4: в битве с боссом по разведданным — пробивает тонкие крыши «Ратте»
+    arty203: { name: "Б-4 · Г-620", type: "HE", cal: 203, pen: [82, 82], vel: 607, filler: 25000 },
+
+    // 280 мм SK C/34 (главный калибр «Ратте») и 128 мм KwK 44 (кормовая башня)
+    psgr28: { name: "Psgr L/4,4 (m.Bdz.)", type: "APHE", cal: 283, pen: [600, 520], vel: 890, filler: 7000 },
+    sprgr28: { name: "Sprgr L/4,5 (Bdz.)", type: "HE", cal: 283, pen: [92, 92], vel: 890, filler: 16000 },
+    pzgr43_128: { name: "PzGr 43", type: "APHE", cal: 128, pen: [246, 196], vel: 920, filler: 550 },
+    sprgr128: { name: "Sprgr L/5", type: "HE", cal: 128, pen: [30, 30], vel: 750, filler: 3600 },
+    // 15 мм MG 151/15 (носовые пулемёты «Ратте»)
+    pzgr15: { name: "15 mm PzGr", type: "AP", cal: 15, pen: [28, 10], vel: 960 },
 
     // 152 мм МЛ-20С
     br540: { name: "БР-540", type: "APHE", cal: 152, pen: [135, 112], vel: 600, filler: 480 },
@@ -115,6 +125,21 @@ export const SHELLS = {
 };
 
 for (const id in SHELLS) SHELLS[id].id = id;
+
+/**
+ * Трофейный кумулятивный снаряд под калибр орудия (падает с подбитого сопровождения «Ратте»):
+ * высокое пробитие и сильное заброневое действие — больше осколков, широкий конус, подрыв ВВ за бронёй.
+ * Регистрируется детерминированно по калибру (одинаково на сервере и у клиентов).
+ */
+export function registerTrophy(cal) {
+    const c = Math.round(cal);
+    const id = "heatT" + c;
+    if (!SHELLS[id]) {
+        const p = Math.round(clamp(c * 2.4 + 70, 210, 340));
+        SHELLS[id] = { id, name: "Трофейный кумулятивный", type: "HEAT", cal: c, pen: [p, p], vel: 640, filler: 900, trophy: true, fragK: 1.9, bodyK: 1.6, cone: 28 };
+    }
+    return id;
+}
 
 export function shellType(s) { return SHELL_TYPES[s.type]; }
 
@@ -129,15 +154,16 @@ export function penAt(s, d) {
 }
 
 /** Базовый урон «тела» снаряда при прохождении через модуль */
-export function bodyDamage(s) { return (60 + s.cal * 1.35) * (SHELL_TYPES[s.type].bodyMul || 0); }
+export function bodyDamage(s) { return (60 + s.cal * 1.35) * (SHELL_TYPES[s.type].bodyMul || 0) * (s.bodyK || 1); }
 
 /** Параметры осколков после пробития */
 export function fragParams(s, armor) {
     const T = SHELL_TYPES[s.type];
-    const n = Math.round((5 + s.cal / 7 + Math.min(armor, 120) / 22) * T.fragMul);
-    const dmg = 18 + s.cal * 0.28;
-    const len = 2.2 + s.cal / 60;
-    return { n, dmg, len, cone: T.cone * Math.PI / 180 };
+    const k = s.fragK || 1;
+    const n = Math.round((5 + s.cal / 7 + Math.min(armor, 120) / 22) * T.fragMul * k);
+    const dmg = (18 + s.cal * 0.28) * Math.sqrt(k);
+    const len = (2.2 + s.cal / 60) * (k > 1 ? 1.4 : 1);
+    return { n, dmg, len, cone: (s.cone || T.cone) * Math.PI / 180 };
 }
 
 /** Параметры взрыва (для каморных и ОФ) */

@@ -46,6 +46,8 @@ const tmpQ = new THREE.Quaternion();
 const tmpP = new THREE.Vector3();
 const tmpS = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+const tmpN = new THREE.Vector3();
+const tmpQ2 = new THREE.Quaternion();
 
 /** Кольцевой буфер плоских декалей на земле */
 class DecalRing {
@@ -69,8 +71,15 @@ class DecalRing {
     add(x, z, a, sx, sz, time, life) {
         const k = this.i;
         this.i = (this.i + 1) % this.max;
+        // декаль ложится на склон: поворот по нормали рельефа, затем по курсу
+        const T = this.terrain;
         tmpQ.setFromAxisAngle(UP, -a);
-        tmpP.set(x, this.y, z);
+        if (T) {
+            const n = T.normal(x, z);
+            tmpQ2.setFromUnitVectors(UP, tmpN.set(n[0], n[1], n[2]));
+            tmpQ.premultiply(tmpQ2);
+        }
+        tmpP.set(x, (T ? T.height(x, z) : 0) + this.y, z);
         tmpS.set(sx, 1, sz);
         tmpM.compose(tmpP, tmpQ, tmpS);
         this.mesh.setMatrixAt(k, tmpM);
@@ -133,6 +142,9 @@ export class Effects {
     }
 
     setMarkColor(hex) { this.markMat.uniforms.uColor.value.setHex(hex); }
+
+    /** Рельеф текущей карты (декали и обломки ложатся на землю) */
+    setTerrain(T) { this.terrain = T; this.marks.terrain = T; this.scorch.terrain = T; }
 
     clear() {
         for (const [, m] of this.tracers) { m.visible = false; this.tracerPool.push(m); }
@@ -216,8 +228,9 @@ export class Effects {
             d.obj.position.z += d.v[2] * dt;
             d.obj.rotation.x += d.spin[0] * dt;
             d.obj.rotation.z += d.spin[2] * dt;
-            if (d.obj.position.y < 0.3 && d.v[1] < 0) {
-                d.obj.position.y = 0.3;
+            const gy = (this.terrain ? this.terrain.height(d.obj.position.x, d.obj.position.z) : 0) + 0.3;
+            if (d.obj.position.y < gy && d.v[1] < 0) {
+                d.obj.position.y = gy;
                 if (Math.abs(d.v[1]) < 2.5) d.rest = true;
                 d.v = [d.v[0] * 0.35, -d.v[1] * 0.25, d.v[2] * 0.35];
                 d.spin = [d.spin[0] * 0.3, 0, d.spin[2] * 0.3];

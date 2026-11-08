@@ -2,9 +2,10 @@ import * as THREE from "three";
 import { camoTexture, trackTexture, runningGearTexture } from "./Textures.js";
 import { turretSlopeRing, hullHalfWidth, skirtSpan } from "../data/VehicleBuild.js";
 import { createKV1, layoutTrack as layoutKV1Track, mergeGeometries as mergeModel } from "./models/KV1Model.js";
+import { createRatte, layoutTrack as layoutRatteTrack } from "./models/RatteModel.js";
 
 /** Детальные модели (иначе машина строится процедурно по описанию) */
-const DETAILED = { kv1: { create: createKV1, layoutTrack: layoutKV1Track } };
+const DETAILED = { kv1: { create: createKV1, layoutTrack: layoutKV1Track }, ratte: { create: createRatte, layoutTrack: layoutRatteTrack } };
 const detailedTemplates = new Map();
 
 const geoCache = new Map();
@@ -420,7 +421,7 @@ function bakeDetailed(kv) {
     // внутреннее устройство в бою не показывается
     for (const g of [...kv.modules, ...kv.crew, ...kv.zones]) g.parent.remove(g);
     kv.root.updateMatrixWorld(true);
-    const buckets = [kv.hull, kv.turret, kv.gun];
+    const buckets = kv.frames ? Object.values(kv.frames) : [kv.hull, kv.turret, kv.gun];
     const keep = new Set([...kv.wheels, ...kv.tracks]);
     const groups = new Map();
     const remove = [];
@@ -430,7 +431,7 @@ function bakeDetailed(kv) {
         let b = o.parent;
         while (b && !buckets.includes(b)) b = b.parent;
         if (!b) return;
-        const key = b.name + "|" + o.material.uuid;
+        const key = b.uuid + "|" + o.material.uuid;
         if (!groups.has(key)) groups.set(key, { bucket: b, material: o.material, geos: [] });
         const g = o.geometry.clone();
         g.applyMatrix4(new THREE.Matrix4().copy(b.matrixWorld).invert().multiply(o.matrixWorld));
@@ -457,7 +458,12 @@ function wrapDetailed(def, model, camo, kv) {
     const turret = model.getObjectByName("turret");
     const gun = model.getObjectByName("gun");
     const barrel = model.getObjectByName("barrel");
-    const tracks = [model.getObjectByName("track_L"), model.getObjectByName("track_R")];
+    const tracks = [];
+    model.traverse((o) => { if (o.isInstancedMesh && o.name.startsWith("track_")) tracks.push(o); });
+    // кормовая башня и зенитки (у «Ратте»)
+    const turret2 = model.getObjectByName("turret2"), gun2 = model.getObjectByName("gun2");
+    const flaks = {};
+    model.traverse((o) => { if (o.name.startsWith("flak:")) flaks[o.name.slice(5)] = { yaw: o, pitch: o.getObjectByName("flakgun") }; });
     const wheels = [];
     model.traverse((o) => { if (o.name.startsWith("wheel:")) wheels.push(o); });
     const meshes = [];
@@ -470,6 +476,11 @@ function wrapDetailed(def, model, camo, kv) {
         barrel: { position: { set x(v) { if (barrel) barrel.position.z = v; }, get x() { return barrel ? barrel.position.z : 0; } } },
         // в модели +X — левый борт: подъём ствола — поворот вокруг X в минус
         setGunPitch(gp) { if (gun) gun.rotation.x = -gp; },
+        /** Станции вооружения босса: курс (относительно корпуса) и возвышение */
+        setStations(st) {
+            if (turret2 && st.t2) { turret2.rotation.y = -st.t2.yaw; if (gun2) gun2.rotation.x = -st.t2.pitch; }
+            for (const id in flaks) if (st[id]) { flaks[id].yaw.rotation.y = -st[id].yaw; if (flaks[id].pitch) flaks[id].pitch.rotation.x = -st[id].pitch; }
+        },
         setTrackPhase(ph) {
             if (kv) { kv.setTrackPhase(ph[0], ph[1]); return; }
             if (ph[0] === phase[0] && ph[1] === phase[1]) return;

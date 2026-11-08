@@ -1,11 +1,12 @@
-import { VEHICLES, CREW_SEATS, MODULE_NAMES } from "./Vehicles.js";
-import { SHELLS } from "./Shells.js";
+import { VEHICLES, BOSSES, CREW_SEATS, MODULE_NAMES } from "./Vehicles.js";
+import { SHELLS, registerTrophy } from "./Shells.js";
 import { Config } from "../core/Config.js";
 import { KV1_SPEC } from "./models/KV1Spec.js";
+import { RATTE_SPEC, GUN_X, GUN2_PIVOT, MUZZLE2_Z } from "./models/RatteSpec.js";
 import { applyModel, patchPart } from "./models/ModelBuild.js";
 
 /** Машины с детальной моделью: броня, модули и экипаж берутся из неё */
-const MODELS = { kv1: KV1_SPEC };
+const MODELS = { kv1: KV1_SPEC, ratte: RATTE_SPEC };
 import { DEG } from "../core/Utils.js";
 
 export const CLEARANCE = 0.3;
@@ -468,6 +469,41 @@ function prepare(id, def) {
     return def;
 }
 
+/**
+ * Босс: всё — из детальной модели (процедурная сборка корпуса не нужна), плюс вторая башня
+ * и параметры станций вооружения.
+ */
+function prepareBoss(id, def) {
+    def.id = id;
+    const spec = MODELS[def.model];
+    def.turret.arc = 0;
+    def.susp = { type: "boss", wheels: spec.ROAD.n, driveFront: false };
+    def.form = { has: true, sw: spec.H.halfWide };
+    def.profile = { ft: spec.H.tipZ - spec.H.glacisTopZ, labels: [] };
+    def.noseNames = {};
+    applyModel(def, spec, MODULE_NAMES);
+    def.turretPoly = convexHull(def.turretOutline);
+    const toGame = ([x, y, z]) => [z, y, -x];
+    def.turret2 = { origin: toGame(spec.turretFrames.turret2.origin), pivot: toGame(GUN2_PIVOT), muzzle: MUZZLE2_Z, elev: [-7, 23] };
+    // два ствола главного калибра: левый (модель +X) — в игре слева (−z)
+    def.gun.barrels = [-GUN_X, GUN_X];
+    def.gun.mag = 1;
+    def.gun.rof = 0;
+    def.ammoTotal = def.shells.reduce((s, [, n]) => s + n, 0);
+    const racks = def.modules.filter((m) => m.type === "ammo");
+    const rSum = racks.reduce((s, m) => s + m.rounds, 0);
+    racks.sort((a, b) => a.order - b.order);
+    racks.forEach((m) => { m.cap = Math.max(1, Math.round((m.rounds / rSum) * def.ammoTotal)); });
+    def.rackOrder = racks.map((m) => m.id);
+    def.spCost = 0;
+    def.crewTitles = {};
+    for (const s of def.crew) def.crewTitles[s] = CREW_SEATS[s].name;
+    def.radius = Math.hypot(def.dims.L / 2 + 4, def.dims.W / 2) + 0.5;
+    def.bodyRadius = Math.hypot(def.dims.L / 2, def.dims.W / 2);
+    def.shellIds = def.shells.map(([sid]) => sid);
+    return def;
+}
+
 function rackOrder(m) {
     if (m.id === "ammo0") return 0;       // ниша башни
     if (m.id === "ammo4") return 1;
@@ -477,8 +513,11 @@ function rackOrder(m) {
 }
 
 for (const id in VEHICLES) prepare(id, VEHICLES[id]);
+for (const id in BOSSES) prepareBoss(id, BOSSES[id]);
+// трофейные кумулятивные — под каждый калибр техники (чтобы снаряд был известен и серверу, и клиентам)
+for (const id in VEHICLES) VEHICLES[id].trophyShell = registerTrophy(VEHICLES[id].gun.cal);
 
-export function getVehicle(id) { return VEHICLES[id]; }
+export function getVehicle(id) { return VEHICLES[id] || BOSSES[id]; }
 
 export function vehiclesOf(nation) {
     return Object.values(VEHICLES).filter((v) => v.nation === nation);

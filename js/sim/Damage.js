@@ -30,14 +30,10 @@ function interiorTargets(v) {
 }
 
 function rayTargets(v, targets, o, d, len) {
-    const fr = {
-        hull: [o, d],
-        turret: [hullToFrame(v, "turret", o), dirHullToFrame(v, "turret", d)],
-        gun: [hullToFrame(v, "gun", o), dirHullToFrame(v, "gun", d)],
-    };
+    const fr = { hull: [o, d] };
     const hits = [];
     for (const t of targets) {
-        const [oo, dd] = fr[t.frame];
+        const [oo, dd] = fr[t.frame] || (fr[t.frame] = [hullToFrame(v, t.frame, o), dirHullToFrame(v, t.frame, d)]);
         const r = t.kind === "crew" ? raySphere(oo, dd, t.c, t.r) : rayAabb(oo, dd, t.min, t.max, len);
         if (r && r.t0 <= len && r.t1 >= 0) hits.push({ t: Math.max(0, r.t0), target: t });
     }
@@ -71,6 +67,7 @@ function hurtModule(ctx, m, dmg, src) {
         ctx.res.events.push("mod:" + m.type);
         Events.emit("modDestroyed", { v, id: m.id, type: m.type, by: ctx.shooter });
     }
+    if (v.boss) v.boss.onModuleHit(ctx, m, before, src);
     if (m.type === "ammo") {
         // шанс детонации бросается один раз на стеллаж за попадание (см. finalize)
         const a = ctx.ammoHits[m.id] || (ctx.ammoHits[m.id] = { m, dmg: 0, body: false, blast: false, wasAlive: before > 0 });
@@ -195,7 +192,7 @@ function finalize(ctx) {
         res.events.push("fire");
         Events.emit("fireStart", { v, by: shooter });
     }
-    if (v.aliveCrew() < Config.CREW.MIN_ALIVE) {
+    if (v.aliveCrew() < v.minCrew()) {
         battle.destroyVehicle(v, "crew", shooter);
         res.killed = true; res.cause = "crew";
     }
@@ -260,9 +257,10 @@ export function applyShellHit(battle, shot, v, trace) {
     res.world = hit.world;
     const entry = res.entry, dir = res.dir;
 
-    if (hit.id === "barrel") {
+    const hitMod = hit.part.module ? v.mods[hit.part.module] : null;
+    if (hitMod && hitMod.type === "barrel") {
         res.kind = "barrel";
-        hurtModule(ctx, v.mods.barrel, s.type === "HE" ? 120 : 30 + s.cal * 1.2, "body");
+        hurtModule(ctx, hitMod, s.type === "HE" ? 120 : 30 + s.cal * 1.2, "body");
         if (s.type === "HE") heSplash(battle, hit.world, s, shooter, v);
         res.snap = snapshot(v);
         return finalize(ctx);
@@ -273,8 +271,10 @@ export function applyShellHit(battle, shot, v, trace) {
     if (s.type === "HE") {
         if (ev.canPen) {
             res.kind = "he-pen";
-            const p = [entry[0] + dir[0] * 0.3, entry[1] + dir[1] * 0.3, entry[2] + dir[2] * 0.3];
-            explodeInside(ctx, targets, p, blastParams(s), 1);
+            // тяжёлые снаряды (203 мм) рвутся глубже и сильнее: пробив крышу, достают до двигателей и баков
+            const depth = 0.3 + Math.max(0, (s.cal - 150) / 45), scale = 1 + Math.max(0, ((s.filler || 0) / 1000 - 5) / 20);
+            const p = [entry[0] + dir[0] * depth, entry[1] + dir[1] * depth, entry[2] + dir[2] * depth];
+            explodeInside(ctx, targets, p, blastParams(s), scale);
         } else {
             res.kind = "he";
             heDirect(ctx, targets, hit, ev, s);
@@ -302,6 +302,7 @@ export function applyShellHit(battle, shot, v, trace) {
 
     // Пробитие: вторичные осколки брони
     res.kind = "pen";
+    if (hitMod && hitMod.type !== "barrel") hurtModule(ctx, hitMod, bodyDamage(s) * 0.8, "body");
     const resid = trace.pen - ev.eff;
     const fp = fragParams(s, ev.info.thick);
     const dirs = [];
@@ -318,8 +319,14 @@ export function applyShellHit(battle, shot, v, trace) {
         res.events.push("fuse");
     } else {
         if (s.type === "APHE") res.events.push("nofuse");
-        const len = s.type === "HEAT" ? clamp(1.1 + resid / 28, 0.9, 4.5) : clamp(1.6 + resid / 22, 1.4, 7);
+        const len = s.type === "HEAT" ? clamp(1.1 + resid / 28, 0.9, 4.5) * (s.trophy ? 1.5 : 1) : clamp(1.6 + resid / 22, 1.4, 7);
         bodyPath(ctx, targets, startP, dir, len, bd);
+        // трофейный кумулятивный: за бронёй рвётся и заряд ВВ
+        if (s.trophy) {
+            const ep = [startP[0] + dir[0] * 1.1, startP[1] + dir[1] * 1.1, startP[2] + dir[2] * 1.1];
+            explodeInside(ctx, targets, ep, blastParams({ type: "APHE", filler: s.filler }), 1);
+            res.events.push("fuse");
+        }
     }
     res.snap = snapshot(v);
     return finalize(ctx);
@@ -355,17 +362,29 @@ export function heSplash(battle, wp, s, shooter, directTarget) {
         ctx.res.kind = "splash";
         ctx.res.entry = pl;
         ctx.res.dir = [0, -1, 0];
-        // гусеницы
-        for (const id of ["trackL", "trackR"]) {
+        for (const id in v.mods) {
             const m = v.mods[id];
-            const d = distToBox(pl, m.def.min, m.def.max);
-            if (d < R * 0.6) hurtModule(ctx, m, (20 + Math.sqrt(s.filler || 0) * 3.2) * (1 - d / (R * 0.6)), "blast");
+            if (m.type === "track") {
+                const d = distToBox(pl, m.def.min, m.def.max);
+                if (d < R * 0.6) hurtModule(ctx, m, (20 + Math.sqrt(s.filler || 0) * 3.2) * (1 - d / (R * 0.6)), "blast");
+            } else if (m.type === "barrel") {
+                const bpos = frameToHull(v, m.def.frame, [m.def.max[0] * 0.6 + m.def.min[0] * 0.4, 0, m.def.c[2]]);
+                const db = Math.hypot(bpos[0] - pl[0], bpos[1] - pl[1], bpos[2] - pl[2]);
+                if (db < R * 0.45) hurtModule(ctx, m, 70 * (1 - db / (R * 0.45)), "blast");
+            } else if (m.type === "flak") {
+                // открытые установки на палубе
+                const d = distToBox(pl, m.def.min, m.def.max);
+                if (d < R * 0.7) hurtModule(ctx, m, (25 + Math.sqrt(s.filler || 0) * 2.4) * (1 - d / (R * 0.7)), "blast");
+            }
         }
-        // ствол
-        const bm = v.mods.barrel;
-        const bpos = frameToHull(v, "gun", [v.def.gun.len * 0.6, 0, 0]);
-        const db = Math.hypot(bpos[0] - pl[0], bpos[1] - pl[1], bpos[2] - pl[2]);
-        if (db < R * 0.45) hurtModule(ctx, bm, 70 * (1 - db / (R * 0.45)), "blast");
+        // открыто сидящий экипаж (зенитчики на палубе) — осколки и ударная волна без брони
+        for (const sname in v.seats) {
+            const seat = v.seats[sname];
+            if (!seat.def.open || !seat.occupant || !seat.occupant.alive) continue;
+            const c = frameToHull(v, seat.def.frame, seat.def.c);
+            const d = Math.hypot(c[0] - pl[0], c[1] - pl[1], c[2] - pl[2]);
+            if (d < R * 1.1) hurtCrew(ctx, { id: sname, member: seat.occupant }, (60 + Math.sqrt(s.filler || 0) * 2.2) * (1 - d / (R * 1.1)));
+        }
         // избыточное давление через крышу / открытую рубку — только если разрыв на уровне крыши или выше
         const hullD = distToHull(v, pl);
         const T = v.def.turret, H = v.def.dims.H;
@@ -436,7 +455,7 @@ export function fireTick(battle, v, dt) {
             Events.emit("fireDetonation", { v });
             return;
         }
-        if (v.aliveCrew() < Config.CREW.MIN_ALIVE) {
+        if (v.aliveCrew() < v.minCrew()) {
             battle.destroyVehicle(v, "fire", f.by);
             return;
         }

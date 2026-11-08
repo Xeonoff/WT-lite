@@ -1,12 +1,13 @@
 import { Events } from "../core/Events.js";
 import { seeded, clamp, segObb, segCircle, circleObb, ptInObb, TAU, rayAabb } from "../core/Utils.js";
 import { rayConvex, raycastVehicle } from "./Armor.js";
+import { Terrain } from "./Terrain.js";
 
 /** Луч в системе объекта, повёрнутого на угол a вокруг вертикали (как экземпляры в WorldMesh) */
 function toLocal(o, a, p, d) {
     const c = Math.cos(-a), s = Math.sin(-a);
     const x = p[0] - o.x, z = p[2] - o.z;
-    return [[x * c - z * s, p[1], x * s + z * c], [d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c]];
+    return [[x * c - z * s, p[1] - (o.y || 0), x * s + z * c], [d[0] * c - d[2] * s, d[1], d[0] * s + d[2] * c]];
 }
 import { MAPS, BIOMES } from "../data/Maps.js";
 
@@ -20,7 +21,8 @@ export class World {
         this.map = MAPS[mapId];
         this.biome = BIOMES[this.map.biome];
         this.mode = modeId;
-        this.S = modeId === "range" ? 320 : modeId === "waves" ? Math.round(this.map.size * 0.86) : this.map.size;
+        // битва с боссом — карта крупнее: «Ратте» идёт к штабу дольше
+        this.S = modeId === "range" ? 320 : modeId === "waves" ? Math.round(this.map.size * 0.86) : modeId === "boss" ? Math.round(this.map.size * 1.4) : this.map.size;
         this.seed = seed;
         this.rng = seeded(seed);
 
@@ -49,8 +51,24 @@ export class World {
         else if (gen === "bocage") this.genBocage();
         else this.genDesert();
 
+        // рельеф строится по готовой разметке (площадки под зданиями, долины рек), затем объекты встают на землю
+        this.terrain = new Terrain(this);
+        this.placeOnGround();
         this.buildSpatial();
         this.buildNav();
+    }
+
+    /** Высота земли, м */
+    h(x, z) { return this.terrain.height(x, z); }
+
+    placeOnGround() {
+        const T = this.terrain;
+        const at = (o) => { o.y = T.height(o.x, o.z); };
+        for (const b of this.buildings) at(b);
+        // скалы слегка утоплены в склон
+        for (const o of this.rocks) o.y = Math.min(T.height(o.x - o.r * 0.6, o.z), T.height(o.x + o.r * 0.6, o.z), T.height(o.x, o.z - o.r * 0.6), T.height(o.x, o.z + o.r * 0.6)) - 0.15;
+        for (const list of [this.trees, this.bushes, this.fences, this.hay, this.hedges, this.points, this.spawns]) for (const o of list) at(o);
+        for (const c of this.bridges) c.y = T.height(c.x, c.z);
     }
 
     /* ───────────────────── Общая разметка ───────────────────── */
@@ -79,6 +97,20 @@ export class World {
                 { x: S - 26, z: S * 0.5, a: Math.PI },
                 { x: S * 0.25, z: 26, a: Math.PI / 2 },
                 { x: S * 0.75, z: 26, a: Math.PI / 2 },
+            ];
+        } else if (this.mode === "boss") {
+            // битва с боссом: «Ратте» идёт с севера к штабу у южного края, игроки выезжают с юга
+            // штаб и три точки разведданных (фланги и центр): удержание ускоряет артудар по «Ратте»
+            const j = () => r.range(-0.04, 0.04) * S;
+            this.points = [
+                { id: "Ш", x: S * 0.5, z: S - 112, r: 22, hq: true },
+                { id: "Р1", x: S * 0.15 + j(), z: S * 0.55 + j(), r: 15, intel: true },
+                { id: "Р2", x: S * 0.5 + j(), z: S * 0.42 + j(), r: 15, intel: true },
+                { id: "Р3", x: S * 0.85 + j(), z: S * 0.55 + j(), r: 15, intel: true },
+            ];
+            this.spawns = [
+                { x: S * 0.5, z: S - 34, a: -Math.PI / 2, spread: S * 0.22 },
+                { x: S * 0.5, z: 48, a: Math.PI / 2, spread: 26 },
             ];
         } else if (this.mode === "duel") {
             // дуэль: без точек, стороны ближе друг к другу
@@ -627,7 +659,7 @@ export class World {
     }
 
     addWreck(v) {
-        const o = { x: v.x, z: v.z, a: v.a, hl: v.def.dims.L / 2, hw: v.def.dims.W / 2, h: v.def.dims.H + (v.deathCause === "ammo" ? 0 : v.def.turret.h), v };
+        const o = { x: v.x, y: v.y || 0, z: v.z, a: v.a, hl: v.def.dims.L / 2, hw: v.def.dims.W / 2, h: v.def.dims.H + (v.deathCause === "ammo" ? 0 : v.def.turret.h), v };
         this.wrecks.push(o);
         this._addSpatial(o, "wreck", Math.hypot(o.hl, o.hw));
         this.markNavObb(o, 2.4);
@@ -715,8 +747,14 @@ export class World {
     }
 
     /* ───────────────────── Видимость ───────────────────── */
-    /** Прямая видимость между точками (здания, скалы, стога, кроны деревьев) */
-    los(x1, z1, x2, z2, ignoreWreckOf) {
+    /**
+     * Прямая видимость между точками (рельеф, здания, скалы, стога, кроны деревьев).
+     * y1, y2 — высота глаз и цели; по умолчанию — над землёй на высоте башни и середины корпуса.
+     */
+    los(x1, z1, x2, z2, ignoreWreckOf, y1, y2) {
+        if (y1 === undefined) y1 = this.h(x1, z1) + 2.3;
+        if (y2 === undefined) y2 = this.h(x2, z2) + 1.4;
+        if (this.terrain.blocks(x1, y1, z1, x2, y2, z2)) return false;
         const cand = this.querySeg(x1, z1, x2, z2, 6);
         let trees = 0;
         for (const e of cand) {
@@ -778,6 +816,27 @@ export class World {
         this.markNavObbCost(o, 1.5, 0);
         Events.emit("worldChange", { type: "hedge", o });
     }
+    /** Здание раздавлено сверхтяжёлой машиной: исчезает из мира, клетки навигации освобождаются */
+    crushBuilding(b) {
+        if (b.dead) return;
+        b.dead = true;
+        for (const bk of this.buckets) {
+            const k = bk.findIndex((e) => e.o === b);
+            if (k >= 0) bk.splice(k, 1);
+        }
+        const n = this.nn, CELLN = CELL;
+        const R = Math.hypot(b.hl, b.hw) + 2.6;
+        const i0 = clamp(Math.floor((b.x - R) / CELLN), 0, n - 1), i1 = clamp(Math.floor((b.x + R) / CELLN), 0, n - 1);
+        const j0 = clamp(Math.floor((b.z - R) / CELLN), 0, n - 1), j1 = clamp(Math.floor((b.z + R) / CELLN), 0, n - 1);
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+            if (ptInObb((i + 0.5) * CELLN, (j + 0.5) * CELLN, b, 2.6)) this.blocked[j * n + i] = 0;
+        }
+        // соседние здания и скалы снова занимают свои клетки
+        for (const o of this.buildings) if (!o.dead && Math.hypot(o.x - b.x, o.z - b.z) < R + 20) this.markNavObb(o, 2.6);
+        for (const o of this.rocks) if (Math.hypot(o.x - b.x, o.z - b.z) < R + 10) this.markNavCircle(o.x, o.z, o.r + 2.4, true);
+        Events.emit("worldChange", { type: "building", o: b });
+    }
+
     blastObstacles(x, z, R) {
         for (const e of this.query(x, z, R + 2)) {
             const o = e.o;
@@ -992,8 +1051,18 @@ class MinHeap {
 /** Столкновение машины с препятствиями мира. Возвращает суммарный вектор выталкивания */
 export function collideStatic(world, v, obb, dt) {
     let px = 0, pz = 0, hit = false;
+    const crusher = !!v.def.boss;
     for (const e of world.query(obb.x, obb.z, Math.hypot(obb.hl, obb.hw) + 4)) {
         const o = e.o;
+        if (crusher) {
+            // «Ратте» давит дома, деревья, заборы, стога и изгороди; скалы и реки ей не преграда
+            if (e.type === "building" && obbObbLocal(obb, o)) world.crushBuilding(o);
+            else if (e.type === "tree" && o.alive && !o.fallen && circleObb(o.x, o.z, o.trunk + 0.5, obb)) world.knockTree(o, v.a);
+            else if (e.type === "fence" && o.alive && ptInObb(o.x, o.z, obb, 0.5)) world.breakFence(o);
+            else if (e.type === "hay" && o.alive && circleObb(o.x, o.z, o.r, obb)) world.breakHay(o);
+            else if (e.type === "hedge" && o.alive && obbObbLocal(obb, o)) world.breakHedge(o);
+            continue;
+        }
         if (e.type === "building" || (e.type === "wreck" && o.v !== v)) {
             const box = { x: obb.x + px, z: obb.z + pz, a: obb.a, hl: obb.hl, hw: obb.hw };
             const m = obbObbLocal(box, o);

@@ -24,6 +24,7 @@ const EVENT_NAMES = [
     "spawn", "vehicleRemoved", "playerSpawn", "shot", "hit", "splashDamage", "impact", "explosion", "destroyed",
     "modDestroyed", "crewKO", "crewSwap", "crewSwapDone", "fireStart", "fireOut", "repairStart", "repairDone",
     "repairCancel", "medkit", "reloaded", "resupply", "pointChange", "artyCalled", "artyShell", "worldChange", "battleEnd",
+    "bossNote", "bossAim", "pickup",
 ];
 for (const name of EVENT_NAMES) Events.on(name, (e) => { if (current) current.onSimEvent(name, e); });
 
@@ -48,11 +49,11 @@ export class Room {
         const S = this.settings;
         if (o.map === "random" || MAPS[o.map]) S.map = o.map;
         if (o.weather === "random" || WEATHER[o.weather]) S.weather = o.weather;
-        if (o.mode === "domination" || o.mode === "duel") S.mode = o.mode;
+        if (o.mode === "domination" || o.mode === "duel" || o.mode === "boss") S.mode = o.mode;
         if (Number.isFinite(+o.teamSize)) S.teamSize = Math.max(2, Math.min(8, Math.round(+o.teamSize)));
-        // дуэль — один на один
+        // дуэль — один на один; битва с боссом — teamSize игроков в одной команде
         if (S.mode === "duel") S.teamSize = 1;
-        else if (S.teamSize < 2) S.teamSize = 6;
+        else if (S.teamSize < 2) S.teamSize = S.mode === "boss" ? 4 : 6;
     }
 
     /** Сетап игрока для нации команды: присланный клиентом (проверенный) или машины I ранга */
@@ -71,7 +72,7 @@ export class Room {
     summary() {
         return {
             id: this.id, name: this.name, state: this.state, map: this.settings.map, mode: this.settings.mode,
-            players: this.members.size, max: this.settings.teamSize * 2,
+            players: this.members.size, max: this.capacity(),
             host: this.members.get(this.hostId) ? this.members.get(this.hostId).client.name : "",
         };
     }
@@ -93,12 +94,20 @@ export class Room {
 
     teamCount(team) { let n = 0; for (const m of this.members.values()) if (m.team === team) n++; return n; }
 
+    /** Мест в комнате: в битве с боссом все игроки — одна команда (колонка — только нация сетапа) */
+    capacity() { return this.settings.mode === "boss" ? this.settings.teamSize : this.settings.teamSize * 2; }
+    /** Пилот в бою: команда и нация (в битве с боссом команда одна, нация — по колонке) */
+    pilotOf(m) {
+        const boss = this.settings.mode === "boss";
+        return { id: m.client.id, name: m.client.name, team: boss ? 0 : m.team, nation: NATIONS[m.team], lineup: m.lineup };
+    }
+
     add(client) {
-        if (this.members.size >= this.settings.teamSize * 2) return "комната заполнена";
+        if (this.members.size >= this.capacity()) return "комната заполнена";
         let prev = this.state === "battle" ? this.pilotsByKey.get(client.key) : null;
         // тот же игрок уже в комнате (вторая вкладка) — прежнего пилота не отдаём
         if (prev && [...this.members.values()].some((o) => o.pilot === prev || o.oldPilot === prev)) prev = null;
-        const team = prev ? prev.team : this.teamCount(0) <= this.teamCount(1) ? 0 : 1;
+        const team = prev ? Math.max(0, NATIONS.indexOf(prev.nation)) : this.teamCount(0) <= this.teamCount(1) ? 0 : 1;
         const m = { client, team, lineup: this.lineupFor(client, team), ready: false, pilot: null };
         this.members.set(client.id, m);
         client.room = this;
@@ -124,7 +133,7 @@ export class Room {
     setTeam(client, team) {
         const m = this.members.get(client.id);
         if (!m || this.state !== "lobby" || (team !== 0 && team !== 1)) return;
-        if (m.team !== team && this.teamCount(team) >= this.settings.teamSize) return;
+        if (m.team !== team && this.settings.mode !== "boss" && this.teamCount(team) >= this.settings.teamSize) return;
         if (m.team !== team) m.lineup = this.lineupFor(client, team);
         m.team = team;
         m.ready = false;
@@ -169,7 +178,7 @@ export class Room {
         if (!ready.length) return "ни у кого нет сетапа";
         const S = this.settings;
         const mapId = S.map === "random" ? MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] : S.map;
-        const pilots = ready.map((m) => ({ id: m.client.id, name: m.client.name, team: m.team, lineup: m.lineup }));
+        const pilots = ready.map((m) => this.pilotOf(m));
         this.run(() => {
             this.battle = new Battle({ mode: S.mode, mapId, seed: 1 + Math.floor(Math.random() * 1e9), weather: S.weather, nations: NATIONS, pilots, teamSize: S.teamSize });
         });
@@ -200,7 +209,7 @@ export class Room {
     joinBattle(m) {
         const b = this.battle;
         if (!m.lineup.length) m.lineup = this.lineupFor(m.client, m.team);
-        m.pilot = b.addPilot({ id: m.client.id, name: m.client.name, team: m.team, lineup: m.lineup });
+        m.pilot = b.addPilot(this.pilotOf(m));
         this.pilotsByKey.set(m.client.key, m.pilot);
         this.sendStart(m);
     }
@@ -210,7 +219,7 @@ export class Room {
         m.client.send({
             t: "start",
             b: { mode: b.mode, mapId: b.world.mapId || b.opts.mapId, seed: b.seed, weather: b.weatherId, nations: b.teamNation, br: b.lineupBR, teamSize: this.settings.teamSize },
-            me: { pid: P.id, name: P.name, team: P.team, lineup: P.lineup.map((l) => l.id) },
+            me: { pid: P.id, name: P.name, team: P.team, nation: P.nation, lineup: P.lineup.map((l) => l.id) },
             full: this.fullState(),
         });
     }
@@ -258,7 +267,11 @@ export class Room {
         this.clockAt = now;
         const dt = 1 / TICK_HZ;
         let n = 0;
-        while (this.acc >= dt && n < 5 && this.battle) { this.step(); this.acc -= dt; n++; }
+        while (this.acc >= dt && n < 5 && this.battle) {
+            // ошибка в одном бою не должна ронять сервер со всеми комнатами
+            try { this.step(); } catch (e) { console.error("[room " + this.id + "] step:", e); this.errors = (this.errors || 0) + 1; if (this.errors > 50) { this.backToLobby(); return; } }
+            this.acc -= dt; n++;
+        }
         // сервер не успевает — не копим долг, иначе потом будет рывок
         if (n === 5) this.acc = Math.min(this.acc, dt);
     }
@@ -358,7 +371,10 @@ export class Room {
             case "spawn": all({ e: "spawn", ...this.spawnInfo(e.v) }); break;
             case "vehicleRemoved": all({ e: "rm", id: e.v.id }); break;
             case "playerSpawn": owner(e.v, { e: "pspawn", id: e.v.id }); break;
-            case "shot": all({ e: "shot", v: e.v.id, s: e.def.id, p: rv(e.pos), d: rd(e.dir) }); break;
+            case "shot": all(e.st ? { e: "shot", v: e.v.id, s: e.def.id, p: rv(e.pos), d: rd(e.dir), st: e.st } : { e: "shot", v: e.v.id, s: e.def.id, p: rv(e.pos), d: rd(e.dir) }); break;
+            case "bossNote": all({ e: "bn", v: idOf(e.v), t: e.text, k: e.kind }); break;
+            case "bossAim": all({ e: "baim", v: idOf(e.v), tg: idOf(e.target), t: r2(e.t) }); break;
+            case "pickup": owner(e.v, { e: "pick", v: e.v.id, id: e.id, n: e.n }); break;
             case "hit": {
                 const base = { e: "hit", sh: idOf(e.shooter), tg: e.target.id, s: e.shell.id, w: rv(e.world), d: rd(e.dir) };
                 const full = { ...base, res: packRes(e.res, true) };

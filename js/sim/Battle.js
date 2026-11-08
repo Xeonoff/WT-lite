@@ -7,14 +7,16 @@ import { WEATHER, BIOME_WEATHER } from "../data/Maps.js";
 import { World } from "./World.js";
 import { Vehicle } from "./Vehicle.js";
 import { Brain } from "./AI.js";
-import { driveVehicle, resolveCollisions } from "./Physics.js";
+import { driveVehicle, resolveCollisions, settleOnGround } from "./Physics.js";
 import { Shot, updateShots } from "./Projectiles.js";
-import { muzzleWorld, gunPivotWorld } from "./Armor.js";
+import { hullToWorld, worldToHull, hullToFrame, frameToHull, dirFrameToHull, dirHullToWorld } from "./Armor.js";
 import { fireTick } from "./Damage.js";
 import { DominationMode } from "./modes/Domination.js";
 import { WavesMode } from "./modes/Waves.js";
 import { RangeMode } from "./modes/Range.js";
 import { DuelMode } from "./modes/Duel.js";
+import { BossMode } from "./modes/Boss.js";
+import { RatteSystems, RatteBrain } from "./Ratte.js";
 
 const CALLSIGNS = [
     ["Сокол", "Беркут", "Ястреб", "Кречет", "Орлан", "Сапсан"],
@@ -46,7 +48,7 @@ export class Battle {
         this.shots = [];
         this.strikes = [];
         // нации команд: в одиночной игре — нация игрока против второй
-        this.teamNation = opts.nations || [opts.nation, opts.nation === "ussr" ? "germany" : "ussr"];
+        this.teamNation = opts.nations || [opts.nation, opts.mode === "boss" ? "germany" : opts.nation === "ussr" ? "germany" : "ussr"];
         this.nation = this.teamNation[0];
         this.enemyNation = this.teamNation[1];
         // «пилоты» — живые игроки; у одиночной игры один локальный пилот
@@ -67,13 +69,14 @@ export class Battle {
         if (this.mode === "domination") this.modeCtl = new DominationMode(this);
         else if (this.mode === "waves") this.modeCtl = new WavesMode(this);
         else if (this.mode === "duel") this.modeCtl = new DuelMode(this);
+        else if (this.mode === "boss") this.modeCtl = new BossMode(this);
         else this.modeCtl = new RangeMode(this);
         this.modeCtl.start();
     }
 
     addPilot(o) {
         const p = {
-            id: o.id, name: o.name, team: o.team, nation: this.teamNation[o.team], local: !!o.local,
+            id: o.id, name: o.name, team: o.team, nation: o.nation || this.teamNation[o.team], local: !!o.local,
             lineup: o.lineup.map((id) => ({ id, used: false, deaths: 0 })),
             sp: 0, spawns: 0, deathAt: -1, stats: freshStats(), vstats: {}, vehicle: null, left: false,
         };
@@ -104,18 +107,23 @@ export class Battle {
         v.spawnT = this.time;
         v.pilot = opts.pilot || null;
         v.callsign = opts.callsign || (opts.isPlayer ? "Вы" : opts.pilot ? opts.pilot.name : this.callsign(team));
-        if (!opts.pilot && !opts.static) {
+        if (def.boss) {
+            // босс: свои системы (экипаж-роли, станции вооружения) и свой ИИ
+            v.boss = new RatteSystems(v, this);
+            v.brain = new RatteBrain(v, this);
+        } else if (!opts.pilot && !opts.static) {
             let skill = opts.skill ?? 0.55;
             if (team !== this.playerTeam) skill = clamp(skill * this.difficulty, 0.2, 0.95);
             v.brain = new Brain(v, this, skill);
         }
         // не спавнимся друг в друге
-        for (let k = 0; k < 24; k++) {
+        for (let k = 0; k < (def.boss ? 0 : 24); k++) {
             const clash = this.vehicles.some((o) => Math.hypot(o.x - v.x, o.z - v.z) < o.def.bodyRadius + def.bodyRadius + (o.dead ? 2.5 : 1)) || this.world.isBlocked(v.x, v.z);
             if (!clash) break;
             const r = 6 + k * 1.5, ang = rnd(0, Math.PI * 2);
             v.x = fx + Math.cos(ang) * r; v.z = fz + Math.sin(ang) * r;
         }
+        settleOnGround(v, this.world);
         this.vehicles.push(v);
         Events.emit("spawn", { v });
         return v;
@@ -195,6 +203,7 @@ export class Battle {
             if (v.fire) fireTick(this, v, dt);
         }
         resolveCollisions(this);
+        for (const v of this.vehicles) if (!v.dead) settleOnGround(v, this.world);
         this.updateStrikes(dt);
         updateShots(this, dt);
         this.spotAcc -= dt;
@@ -202,20 +211,20 @@ export class Battle {
         if (!this.ended) this.modeCtl.update(dt);
     }
 
-    /** Поворот башни (или орудия в рубке) к точке прицеливания */
+    /** Поворот башни (или орудия в рубке) к точке прицеливания — в осях корпуса, стоящего на склоне */
     aimTurret(v, dt) {
         if (!v.aimPoint) { v.trRate = 0; return; }
-        const piv = gunPivotWorld(v);
         const T = v.def.turret;
+        const loc = worldToHull(v, v.aimPoint);
         let want;
         if (T.casemate) {
-            want = angDiff(v.a, Math.atan2(v.aimPoint[2] - piv[2], v.aimPoint[0] - piv[0]));
+            const piv = frameToHull(v, "gun", [0, 0, 0]);
+            want = Math.atan2(loc[2] - piv[2], loc[0] - piv[0]);
             const arc = T.arc * Math.PI / 180;
             want = clamp(want, -arc, arc);
         } else {
             // относительный угол башни: от центра башни на точку
-            const tc = [v.x + Math.cos(v.a) * T.x, v.z + Math.sin(v.a) * T.x];
-            want = angDiff(v.a, Math.atan2(v.aimPoint[2] - tc[1], v.aimPoint[0] - tc[0]));
+            want = Math.atan2(loc[2], loc[0] - T.x);
         }
         const rate = v.turretRate();
         const d = angDiff(v.tr, want);
@@ -229,33 +238,52 @@ export class Battle {
         v.gp += dp;
     }
 
-    /** Нужный угол возвышения орудия (в пределах его углов наводки), рад */
+    /** Нужный угол возвышения орудия относительно башни (в пределах его углов наводки), рад */
     wantPitch(v) {
         const E = v.def.gun.elev;
-        if (!v.aimPoint) return clamp(0, E[0] * DEG, E[1] * DEG);
-        const piv = gunPivotWorld(v);
-        const dx = v.aimPoint[0] - piv[0], dz = v.aimPoint[2] - piv[2];
-        const want = Math.atan2(v.aimPoint[1] - piv[1], Math.max(3, Math.hypot(dx, dz)));
-        return clamp(want, E[0] * DEG, E[1] * DEG);
+        return clamp(this.wantPitchRaw(v), E[0] * DEG, E[1] * DEG);
     }
 
-    /** Линия выстрела — фактическая ось ствола: курс башни/орудия и угол возвышения */
-    fireLine(v) {
-        const m = muzzleWorld(v);
-        const yaw = v.gunYaw();
-        const pitch = v.gp;
-        const dir = [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
+    /** То же без ограничения углами наводки */
+    wantPitchRaw(v) {
+        if (!v.aimPoint) return 0;
+        // точка в осях башни; от оси цапф — с учётом доворота орудия в рубке
+        const q = hullToFrame(v, "turret", worldToHull(v, v.aimPoint));
+        const piv = v.def.gunPivot, gr = v.gunRel();
+        const dx = q[0] - piv[0], dz = q[2] - piv[2];
+        const fx = dx * Math.cos(gr) + dz * Math.sin(gr);
+        return Math.atan2(q[1] - piv[1], Math.max(3, Math.abs(fx) > 0.5 ? fx : Math.hypot(dx, dz)));
+    }
+
+    /** Линия выстрела — фактическая ось ствола (с наклоном корпуса на склоне) */
+    fireLine(v, barrel = 0) {
+        const off = v.def.gun.barrels ? v.def.gun.barrels[barrel] || 0 : 0;
+        const m = hullToWorld(v, frameToHull(v, "gun", [v.def.gun.len, 0, off]));
+        const dir = dirHullToWorld(v, dirFrameToHull(v, "gun", [1, 0, 0]));
+        const yaw = Math.atan2(dir[2], dir[0]);
+        const pitch = Math.asin(clamp(dir[1], -1, 1));
         return { m, yaw, pitch, dir };
     }
 
-    /** Выстрел строго по оси ствола */
+    /** Выстрел строго по оси ствола (у босса — залп из всех исправных стволов главного калибра) */
     fire(v) {
         if (!v.canFire()) return false;
+        const barrels = v.boss ? v.boss.salvo() : [0];
         const sid = v.consumeShot();
         if (!sid) return false;
         const def = SHELLS[sid];
-        const { m, dir } = this.fireLine(v);
-        this.shots.push(new Shot(v, def, m, dir));
+        if (barrels.length > 1) v.ammo[sid] = Math.max(0, v.ammo[sid] - (barrels.length - 1));
+        let m, dir;
+        for (const i of barrels) {
+            ({ m, dir } = this.fireLine(v, i));
+            this.shots.push(new Shot(v, def, m, dir));
+            if (barrels.length > 1) Events.emit("shot", { v, def, pos: m, dir, barrel: i });
+        }
+        if (barrels.length > 1) {
+            v.lastShot = this.time;
+            v.recoil = 1;
+            return true;
+        }
         v.lastShot = this.time;
         v.bloom += def.cal >= 40 ? 1.6 : 0.35;
         v.recoil = 1;
@@ -270,12 +298,21 @@ export class Battle {
         return Math.max(0, ready - this.time);
     }
 
+    /** Перерыв между артударами машины, с (режим может сокращать — разведданные в битве с боссом) */
+    artyCooldown(v) {
+        const A = Config.ARTY;
+        if (this.mode === "range") return 5;
+        const m = this.modeCtl && this.modeCtl.artyCooldown ? this.modeCtl.artyCooldown(v) : null;
+        return m || A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT);
+    }
+    artyRange(v) { return (this.modeCtl && this.modeCtl.artyRange && this.modeCtl.artyRange(v)) || Config.ARTY.RANGE; }
+
     callArtillery(v, x, z) {
         const A = Config.ARTY;
         if (!v || v.dead || this.ended) return { ok: false, reason: "недоступно" };
         const left = this.artyLeft(v);
         if (left > 0) return { ok: false, reason: "перезарядка " + Math.ceil(left) + " с" };
-        if (Math.hypot(x - v.x, z - v.z) > A.RANGE) return { ok: false, reason: "слишком далеко" };
+        if (Math.hypot(x - v.x, z - v.z) > this.artyRange(v)) return { ok: false, reason: "слишком далеко" };
         if (!v.pilot) {
             // ботам — один удар на команду за раз и общий перерыв (десятки разрывов разом тормозили игру)
             this.botArtyT = this.botArtyT || [0, 0];
@@ -284,8 +321,9 @@ export class Battle {
         }
         const S = this.world.S;
         x = clamp(x, 4, S - 4); z = clamp(z, 4, S - 4);
-        v.artyT = this.time + (this.mode === "range" ? 5 : A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT));
-        const def = SHELLS[v.def.nation === "ussr" ? "arty122" : "arty105"];
+        v.artyT = this.time + this.artyCooldown(v);
+        const sid = this.modeCtl && this.modeCtl.artyShell ? this.modeCtl.artyShell(v) : null;
+        const def = SHELLS[sid || (v.def.nation === "ussr" ? "arty122" : "arty105")];
         const s = { x, z, team: v.team, by: v, def, t: 0, n: 0, total: A.SHELLS, r: A.SPREAD, next: A.DELAY, done: false };
         this.strikes.push(s);
         Events.emit("artyCalled", { strike: s, v });
@@ -302,7 +340,8 @@ export class Battle {
                 const px = s.x + Math.cos(a) * r, pz = s.z + Math.sin(a) * r;
                 const dx = rnd(-0.06, 0.06), dz = rnd(-0.06, 0.06);
                 const L = Math.hypot(dx, 1, dz);
-                const shot = new Shot(s.by, s.def, [px - dx * 70, 70, pz - dz * 70], [dx / L, -1 / L, dz / L]);
+                const gy = this.world.h(px, pz);
+                const shot = new Shot(s.by, s.def, [px - dx * 70, gy + 70, pz - dz * 70], [dx / L, -1 / L, dz / L]);
                 shot.ignore = null;
                 shot.arty = true;
                 this.shots.push(shot);
@@ -326,20 +365,22 @@ export class Battle {
             if (e.dead) { e.visible = [true, true]; continue; }
             e.visible[e.team] = true;
             const t = 1 - e.team;
-            if (e.static) { e.visible[t] = true; continue; }
+            // босс виден всегда: 11 м высоты не спрятать
+            if (e.static || e.def.boss) { e.visible[t] = true; continue; }
             let seen = false;
             const fired = now - e.lastShot < C.FIRED_REVEAL;
             for (const o of this.vehicles) {
                 if (o.dead || o.team !== t) continue;
                 const d = Math.hypot(o.x - e.x, o.z - e.z);
                 if (d < C.PROXIMITY) { seen = true; break; }
-                let R = C.RANGE * wk * (o.hasSeat("commander") && !o.seatOk("commander") ? 0.8 : 1);
+                let R = C.RANGE * wk * (o.hasSeat("commander") && !o.seatOk("commander") ? 0.8 : 1) * (o.def.boss ? 1.6 : 1);
                 if (fired) R = 380 * Math.max(0.6, wk);
                 else if (e.concealed > 0.3) {
                     const moving = Math.abs(e.v) > 1.2;
                     R = Math.min(R, (moving ? C.BUSH_MOVING : C.BUSH_STILL) * (1.25 - e.concealed * 0.45));
                 }
-                if (d < R && this.world.los(o.x, o.z, e.x, e.z)) { seen = true; break; }
+                // глаза — на крыше башни наблюдателя, цель — верх корпуса и башня (из-за гребня видна башня)
+                if (d < R && this.world.los(o.x, o.z, e.x, e.z, null, o.y + o.def.dims.H + o.def.turret.h, e.y + e.def.dims.H + e.def.turret.h * 0.6)) { seen = true; break; }
             }
             if (seen) e.spotT[t] = now + C.MEMORY;
             e.visible[t] = now < e.spotT[t];

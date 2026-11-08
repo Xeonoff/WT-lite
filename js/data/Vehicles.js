@@ -389,16 +389,54 @@ export const CREW_SEATS = {
     loader: { name: "Заряжающий", short: "ЗАР" },
     loader2: { name: "Заряжающий", short: "ЗР2" },
     commander: { name: "Командир", short: "КМД" },
+    // экипаж «Ратте» (20 мест)
+    driver_l: { name: "Мехвод (левый)", short: "МХ1" }, driver_r: { name: "Мехвод (правый)", short: "МХ2" },
+    radio_1: { name: "Радист", short: "РД1" }, radio_2: { name: "Радист", short: "РД2" },
+    mg_l: { name: "Стрелок MG (левый)", short: "ПЛ1" }, mg_r: { name: "Стрелок MG (правый)", short: "ПЛ2" },
+    mech_1: { name: "Моторист", short: "МТ1" }, mech_2: { name: "Моторист", short: "МТ2" }, mech_3: { name: "Моторист", short: "МТ3" },
+    rangefinder: { name: "Дальномерщик", short: "ДАЛ" },
+    gunlayer_l: { name: "Наводчик левого 280 мм", short: "НВ1" }, gunlayer_r: { name: "Наводчик правого 280 мм", short: "НВ2" },
+    loader_l: { name: "Заряжающий 280 мм", short: "ЗР1" }, loader_r: { name: "Заряжающий 280 мм", short: "ЗР2" },
+    t2_cmd: { name: "Командир башни 128 мм", short: "КБ" }, t2_gunner: { name: "Наводчик 128 мм", short: "Н128" }, t2_loader: { name: "Заряжающий 128 мм", short: "З128" },
+    flak_l: { name: "Зенитчик (левый)", short: "ЗН1" }, flak_r: { name: "Зенитчик (правый)", short: "ЗН2" },
 };
 
 export const MODULE_NAMES = {
     engine: "Двигатель", transmission: "Трансмиссия", fuel: "Топливный бак", ammo: "Боеукладка",
     breech: "Казённик", barrel: "Ствол", drive: "Пов. механизм", track: "Гусеница",
     radiator: "Радиатор", oil: "Масляный бак", radio: "Радиостанция", battery: "Аккумуляторы",
+    hoist: "Элеваторы подачи", generator: "Генераторы", optic: "Оптика", mg: "Пулемёт", flak: "Зенитная установка",
+    room: "Отсек", infirmary: "Лазарет", ammo2: "Укладка 128 мм",
 };
 
 export const MODULE_SHORT = {
     engine: "ДВИГ", transmission: "ТРАНСМ", fuel: "ТОПЛ", ammo: "БК",
     breech: "КАЗЁН", barrel: "СТВОЛ", drive: "ПОВОР", track: "ГУС",
     radiator: "РАДИАТ", oil: "МАСЛО", radio: "РАЦИЯ", battery: "АКБ",
+    hoist: "ЭЛЕВ", generator: "ГЕН", optic: "ОПТ", mg: "ПУЛ", flak: "ЗЕН", room: "ОТС", infirmary: "ЛАЗ", ammo2: "БК128",
+};
+
+/**
+ * Боссы: техника вне дерева исследований и подбора ботов (режим «Битва с боссом»).
+ * Броня, модули, экипаж и станции вооружения — из детальной модели (js/data/models/RatteSpec.js).
+ */
+export const BOSSES = {
+    ratte: {
+        name: "P.1000 «Ратте»", short: "Ратте", nation: "germany", rank: 4, br: 9.0, role: "heavy", boss: true,
+        desc: "Сухопутный крейсер Krupp: 1000 т, 35 м, две 280-мм корабельные пушки, кормовая башня 128 мм, две счетверённые зенитки и носовые пулемёты. 20 человек экипажа: каждое орудие и система работают, пока жив их расчёт. Броня 150–360 мм — ищите слабые места: приборы мехводов, шаровые установки, ворота гаража, решётки радиаторов, колпаки прицелов и дальномера, корму и открытые зенитные площадки.",
+        dims: { L: 35, W: 14, H: 7.2, tw: 4.25, th: 3.6 },
+        armor: {
+            hull: { front: [360, 59], lower: [300, 46], side: [200, 0], rear: [150, 10], roof: [50] },
+            turret: { front: [358, 23], side: [190, 0], rear: [350, 0], roof: [150] },
+        },
+        turret: { x: 3.5, hl: 6.3, hw: 6.0, h: 3.1, shape: "box" },
+        gun: { name: "2 × 28 cm SK C/34", cal: 283, reload: 26, elev: [-8, 40], elevRate: 2.6, aim: 3 },
+        shells: [["sprgr28", 40], ["psgr28", 24]],
+        mob: { speed: 6, reverse: 2.5, pw: 16, hull: 5, turret: 4.5, mass: 1000 },
+        engine: { type: "diesel", cyl: 20, idle: 420, max: 1500, gears: 4 },
+        crew: ["driver_l", "driver_r", "radio_1", "radio_2", "mg_l", "mg_r", "mech_1", "mech_2", "mech_3", "commander", "rangefinder",
+            "gunlayer_l", "gunlayer_r", "loader_l", "loader_r", "t2_cmd", "t2_gunner", "t2_loader", "flak_l", "flak_r"],
+        minCrew: 6,
+        model: "ratte", paint: "grey", layout: "rear",
+    },
 };

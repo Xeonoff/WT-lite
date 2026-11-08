@@ -70,11 +70,9 @@ export function probeShot(battle, shooter, p0, dir, maxL) {
 
 function firstHit(battle, s, p0, p1, L) {
     let best = null;
-    // земля
-    if (p1[1] <= 0.02) {
-        const t = (p0[1] - 0.02) / Math.max(1e-6, p0[1] - p1[1]) * L;
-        best = { t: Math.max(0, t), kind: "ground" };
-    }
+    // земля (рельеф): шаг подпроверки не длиннее 2,5 м
+    const tg = battle.world.terrain.ray(p0, s.d, L, Math.min(L, 2.5));
+    if (tg >= 0) best = { t: tg, kind: "ground" };
     // машины
     if (!s.harmless) {
         for (const v of battle.vehicles) {

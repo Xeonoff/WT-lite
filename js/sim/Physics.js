@@ -14,6 +14,9 @@ export function driveVehicle(v, dt) {
     if (can) {
         if (inp.throttle > 0) target = inp.throttle * v.maxSpeed();
         else if (inp.throttle < 0) target = inp.throttle * v.maxReverse();
+        // склон: в гору медленнее, под гору — чуть быстрее
+        const up = Math.sin(v.pitch || 0) * Math.sign(target);
+        target *= clamp(1 - up * 2.6, 0.3, 1.15);
     }
     const acc = v.accel();
     const brake = 7.5;
@@ -41,6 +44,23 @@ export function driveVehicle(v, dt) {
     const hw = v.def.dims.W / 2;
     v.trackPhase[0] += (v.v + v.w * hw) * dt;
     v.trackPhase[1] += (v.v - v.w * hw) * dt;
+}
+
+/**
+ * Машина ложится на рельеф: высота — по опорным точкам гусениц (на гребне — по середине,
+ * в ложбине — по концам), тангаж и крен — по разнице высот носа/кормы и бортов.
+ */
+export function settleOnGround(v, world) {
+    const T = world.terrain;
+    if (!T) return;
+    const L = v.def.dims.L * 0.42, W = v.def.dims.W * 0.42;
+    const c = Math.cos(v.a), s = Math.sin(v.a);
+    const hf = T.height(v.x + c * L, v.z + s * L), hb = T.height(v.x - c * L, v.z - s * L);
+    const hr = T.height(v.x - s * W, v.z + c * W), hl = T.height(v.x + s * W, v.z - c * W);
+    const hc = T.height(v.x, v.z);
+    v.pitch = Math.atan2(hf - hb, 2 * L);
+    v.roll = Math.atan2(hl - hr, 2 * W);
+    v.y = Math.max(hc, (hf + hb) / 2, (hl + hr) / 2);
 }
 
 /** Столкновения с миром и между машинами */

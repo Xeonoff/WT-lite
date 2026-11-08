@@ -60,7 +60,8 @@ export class HUD {
         const sb = $("shells");
         sb.innerHTML = "";
         this.shellCells = {};
-        p.def.shellIds.forEach((sid, i) => {
+        this.shellKey = p.shellIds().join();
+        p.shellIds().forEach((sid, i) => {
             const s = SHELLS[sid], T = SHELL_TYPES[s.type];
             const el = h("div", "shell ui-block", `<span class="key">${i + 1}</span><div class="sn">${s.name}</div><div class="st" style="color:${T.color}">${T.short} · ${T.name}</div><div class="sp"><b class="pen">—</b><span class="cnt">0</span></div>`);
             el.title = T.desc;
@@ -84,6 +85,8 @@ export class HUD {
         $("spotted").classList.toggle("on", !!(p && !p.dead && p.visible[1 - b.playerTeam] && b.mode !== "range"));
         $("spBadge").textContent = b.mode === "range" ? "∞" : b.sp;
         if (!p || p.dead || !this.crewCells) return;
+        // добыты трофейные снаряды — пересобрать панель снарядов
+        if (p.shellIds().join() !== this.shellKey) { this.build(b); return; }
         // экипаж
         for (const s in this.crewCells) {
             const el = this.crewCells[s];
@@ -122,7 +125,7 @@ export class HUD {
         $("consF").classList.toggle("urgent", !!p.fire && p.ext > 0);
         const A = b.artyLeft(p);
         $("consBs").textContent = A > 0 ? Math.ceil(A) + "с" : "ГОТОВ";
-        $("consBf").style.width = A > 0 ? (A / 80 * 100).toFixed(0) + "%" : "0%";
+        $("consBf").style.width = A > 0 ? (A / Math.max(A, b.artyCooldown(p)) * 100).toFixed(0) + "%" : "0%";
         $("consB").classList.toggle("ready", A <= 0);
         // тревоги
         const al = [];
@@ -183,6 +186,19 @@ export class HUD {
                 <div class="pts">${pts}</div>
                 <div class="tk e"><div class="bar"><i style="width:${(en / m.max * 100).toFixed(1)}%"></i></div><b>${Math.ceil(en)}</b></div>
                 <div class="timer">${fmtTime(m.time)}</div>`;
+        } else if (m.kind === "boss") {
+            // панель босса: боеспособность «Ратте», его системы, прорыв к штабу
+            const s = m.sys;
+            const chip = (ok, label, title) => `<span class="bs ${ok ? "" : "off"}" title="${title}">${label}</span>`;
+            const eff = Math.round(m.eff * 100);
+            el.innerHTML = `<div class="boss">
+                <div class="bh"><b>P.1000 «РАТТЕ»</b><span>${m.dead ? "уничтожен" : "боеспособность " + eff + "%"}</span></div>
+                <div class="bbar"><i style="width:${m.dead ? 0 : eff}%"></i></div>
+                <div class="bsys">${chip(s[0] > 0, "ГК " + s[0] + "/2", "главный калибр 280 мм: исправных стволов с расчётом")}${chip(s[1] > 0, "128", "кормовая башня 128 мм")}${chip(s[2] > 0, "ЗЕН " + s[2] + "/2", "зенитные установки Flakvierling")}${chip(s[3] > 0, "ПУЛ " + s[3] + "/2", "носовые пулемёты MG 151/15")}${chip(s[4] > 0, "ДВИГ " + s[4] + "/8", "работающих двигателей")}${chip(s[5] > 0, s[5] ? "ХОД" : "ОБЕЗДВИЖЕН", "подвижность")}${chip(s[6] > 0, "РАЦИЯ", "радио: вызывает подкрепление")}${chip(m.crew > 5, "ЭКИПАЖ " + m.crew + "/" + m.crewMax, "живых членов экипажа (меньше 6 — машина потеряна)")}</div>
+                </div>
+                <div class="bhq"><span>до штаба</span><b>${m.dist} м</b>${m.hq > 0.01 ? `<div class="hqbar"><i style="width:${Math.round(m.hq * 100)}%"></i></div>` : ""}</div>
+                <div class="bhq intel" title="Точки разведданных: наши сокращают перерыв артудара (203-мм Б-4 пробивают крышу «Ратте»), у противника — ускоряют «Ратте»"><span>разведка</span><b><i class="a">${m.intel}</i> : <i class="e">${m.intelEnemy}</i></b><span>арт. ${Math.round(m.artyCd)} с${m.speedK > 1.01 ? ` · <i class="e">ход ×${m.speedK.toFixed(1)}</i>` : ""}</span></div>
+                <div class="timer">${fmtTime(m.time)}</div>`;
         } else if (m.kind === "duel") {
             const pt = b.playerTeam;
             el.innerHTML = `<div class="tk a"><b>${m.left[pt]}</b></div><div class="winfo">ДУЭЛЬ · машин в запасе</div><div class="tk e"><b>${m.left[1 - pt]}</b></div>
@@ -221,6 +237,14 @@ export class HUD {
             g.textAlign = "center";
             g.fillText(q.id, q.x * k, q.z * k + 4);
         }
+        // ящики с трофеями (битва с боссом)
+        for (const pk of b.modeCtl.pickups || []) {
+            g.fillStyle = "#ffd25a";
+            g.fillRect(pk.x * k - 3, pk.z * k - 3, 6, 6);
+            g.strokeStyle = "rgba(0,0,0,.7)";
+            g.lineWidth = 1;
+            g.strokeRect(pk.x * k - 3, pk.z * k - 3, 6, 6);
+        }
         // кадр камеры
         if (cam) {
             g.strokeStyle = "rgba(255,255,255,.35)";
@@ -255,6 +279,19 @@ export class HUD {
         g.fillRect(0, 0, W, W);
         g.fillStyle = "rgba(0,0,0,.25)";
         g.fillRect(0, 0, W, W);
+        // отмывка рельефа: склоны к свету светлее, от света — темнее; низины чуть темнее
+        const T = w.terrain;
+        if (T) {
+            const img = g.getImageData(0, 0, W, W), D = img.data;
+            for (let py = 0; py < W; py++) for (let px = 0; px < W; px++) {
+                const x = (px + 0.5) / k, z = (py + 0.5) / k;
+                const n = T.normal(x, z);
+                const shade = (-n[0] * 0.55 - n[2] * 0.62 + n[1] * 0.56 - 0.56) * 4.2 + T.height(x, z) * 0.018;
+                const i = (py * W + px) * 4;
+                for (let c = 0; c < 3; c++) D[i + c] = Math.max(0, Math.min(255, D[i + c] * (1 + shade)));
+            }
+            g.putImageData(img, 0, 0);
+        }
         g.strokeStyle = "rgba(160,140,100,.6)";
         g.lineCap = "round";
         for (const rd of w.roads) {

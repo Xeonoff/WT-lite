@@ -1,7 +1,7 @@
 import { rnd, clamp, angDiff } from "../core/Utils.js";
 import { Config } from "../core/Config.js";
-import { SHELLS } from "../data/Shells.js";
-import { hullToWorld, muzzleWorld, traceShot, gunPivotWorld } from "./Armor.js";
+import { SHELLS, penAt } from "../data/Shells.js";
+import { hullToWorld, muzzleWorld, traceShot, gunPivotWorld, frameToHull } from "./Armor.js";
 
 const ENGAGE = { light: 95, medium: 150, heavy: 175, td: 235 };
 
@@ -88,8 +88,9 @@ export class Brain {
             if (this.los) this.lastSeen = { x: t.x, z: t.z, t: now };
             this.chooseShell();
             // артудар по малоподвижной цели
-            if (b.mode !== "range" && this.dist > 55 && this.dist < Config.ARTY.RANGE && Math.abs(t.v) < 1.5 &&
-                b.artyLeft(v) <= 0 && Math.random() < 0.025 * this.skill) {
+            // по «Ратте» — при каждой возможности: тонкая крыша держит только мелкие калибры
+            if (b.mode !== "range" && this.dist > 55 && this.dist < b.artyRange(v) && (Math.abs(t.v) < 1.5 || t.def.boss) &&
+                b.artyLeft(v) <= 0 && Math.random() < (t.def.boss ? 0.3 : 0.025) * this.skill) {
                 b.callArtillery(v, t.x + rnd(-4, 4), t.z + rnd(-4, 4));
             }
         }
@@ -118,6 +119,7 @@ export class Brain {
         if (!t) return;
         this.aimT = this.b.time;
         const d = t.def, T = d.turret;
+        if (d.boss) { this.chooseAimBoss(); return; }
         const cands = [
             [0, d.dims.H * 0.62, 0],
             [T.x, d.dims.H + T.h * 0.5, 0],
@@ -146,11 +148,48 @@ export class Brain {
         this.aimLocal = best;
     }
 
+    /**
+     * Босс: перебираем ослабленные зоны (приборы, шаровые установки, ворота, колпаки),
+     * экраны зениток и корму — оцениваем пробитие из текущей позиции.
+     */
+    chooseAimBoss() {
+        const v = this.v, t = this.target, d = t.def;
+        const shell = SHELLS[v.shell];
+        const m = muzzleWorld(v);
+        if (!d.aimSpots) {
+            d.aimSpots = [];
+            for (const p of d.parts) {
+                const flak = p.module && p.module.startsWith("flak");
+                if ((p.weak || flak) && p.center) d.aimSpots.push({ frame: p.frame, c: p.center });
+            }
+            d.aimSpots.push({ frame: "hull", c: [-d.dims.L / 2 + 0.3, d.dims.H * 0.75, 0] }, { frame: "hull", c: [-d.dims.L * 0.3, d.dims.H * 0.75, -d.dims.W / 2 + 0.2] },
+                { frame: "hull", c: [-d.dims.L * 0.3, d.dims.H * 0.75, d.dims.W / 2 - 0.2] });
+        }
+        let best = null, bestS = -Infinity;
+        for (const sp of d.aimSpots) {
+            const w = hullToWorld(t, frameToHull(t, sp.frame, sp.c));
+            const dx = w[0] - m[0], dy = w[1] - m[1], dz = w[2] - m[2];
+            const L = Math.hypot(dx, dy, dz) || 1;
+            const tr = traceShot(shell, t, m, [dx / L, dy / L, dz / L], L + 8, L);
+            let s = -80;
+            if (tr.main) s = (tr.pen - tr.main.ev.eff) - tr.main.ev.ricoP * 60;
+            s += rnd(0, 25) * (1.1 - this.skill);
+            if (s > bestS) { bestS = s; best = sp; }
+        }
+        this.aimLocal = best ? frameToHull(t, best.frame, best.c) : [0, d.dims.H * 0.6, 0];
+    }
+
     chooseShell() {
         const v = this.v, t = this.target;
         if (!t) return;
-        const ids = v.def.shellIds.filter((s) => v.ammo[s] > 0);
+        const ids = v.shellIds().filter((s) => v.ammo[s] > 0);
         if (!ids.length) return;
+        if (t.def.boss) {
+            // по сверхтяжёлой броне — снаряд с наибольшим пробитием на этой дистанции
+            const best = ids.filter((s) => SHELLS[s].type !== "HE").sort((a, b) => penAt(SHELLS[b], this.dist) - penAt(SHELLS[a], this.dist))[0] || ids[0];
+            if (best !== v.shell && (v.reload > v.reloadTotal * 0.35 || !v.loaded)) v.selectShell(best);
+            return;
+        }
         const thin = Math.max(t.def.armor.hull.side[0], t.def.armor.turret.side[0]) <= 20 || t.def.turret.open;
         let pick = ids.find((s) => SHELLS[s].type !== "HE") || ids[0];
         if (thin) pick = ids.find((s) => SHELLS[s].type === "HE") || pick;
@@ -192,7 +231,7 @@ export class Brain {
             const ls = this.lastSeen && now - this.lastSeen.t < 12 ? this.lastSeen : null;
             const fx = ls ? ls.x : ahead ? ahead[0] : v.x + Math.cos(v.a) * 40;
             const fz = ls ? ls.z : ahead ? ahead[1] : v.z + Math.sin(v.a) * 40;
-            v.aimPoint = [fx, 1.2, fz];
+            v.aimPoint = [fx, b.world.h(fx, fz) + 1.2, fz];
         }
 
         // движение
@@ -231,7 +270,8 @@ export class Brain {
         }
 
         const role = v.def.role;
-        const engage = t && this.los && this.dist < ENGAGE[role] * (0.85 + this.skill * 0.3);
+        // за трофеем едут, не ввязываясь в перестрелку (стреляют на ходу)
+        const engage = t && this.los && this.dist < ENGAGE[role] * (0.85 + this.skill * 0.3) && !(this.goal && this.goal.pickup);
         let moved = false;
         if (engage) {
             const bearing = Math.atan2(t.z - v.z, t.x - v.x);
@@ -335,7 +375,7 @@ export class Brain {
         // орудие смотрит на цель?
         const piv = gunPivotWorld(v);
         const want = Math.atan2(v.aimPoint[2] - piv[2], v.aimPoint[0] - piv[0]);
-        const err = Math.abs(angDiff(v.gunYaw(), want));
+        const err = Math.abs(angDiff(b.fireLine(v).yaw, want));
         const tol = Math.atan2(t.def.dims.W * 0.45, this.dist);
         if (err > tol) return;
         const tolP = Math.atan2(t.def.dims.H * 0.35, this.dist);

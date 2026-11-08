@@ -38,6 +38,24 @@
 #modePanel .pt .pp.a { background: var(--ally); }
 #modePanel .pt .pp.e { background: var(--enemy); }
 #modePanel .timer { font: 700 13px/1.15 var(--font-display); color: var(--muted); margin-left: 4px; }
+/* панель босса */
+#modePanel .boss { display: flex; flex-direction: column; gap: 4px; min-width: min(430px, 70vw); }
+#modePanel .boss .bh { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+#modePanel .boss .bh b { font: 800 14px/1.1 var(--font-display); letter-spacing: .08em; color: #ffd7cc; }
+#modePanel .boss .bh span { font-size: 11px; color: var(--muted); }
+#modePanel .boss .bbar { height: 8px; border-radius: 8px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+#modePanel .boss .bbar i { display: block; height: 100%; background: linear-gradient(90deg, #a8281c, var(--enemy) 70%, #ff9a7a); transition: width .4s; }
+#modePanel .boss .bsys { display: flex; flex-wrap: wrap; gap: 4px; }
+#modePanel .bs { font: 700 10px/1 var(--font-ui); letter-spacing: .04em; padding: 3px 6px; border-radius: 5px; background: rgba(255, 90, 72, .18); color: #ffc2b8; border: 1px solid rgba(255, 90, 72, .35); }
+#modePanel .bs.off { background: rgba(255, 255, 255, .05); color: var(--muted); border-color: rgba(255, 255, 255, .12); text-decoration: line-through; }
+#modePanel .bhq { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 70px; }
+#modePanel .bhq span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+#modePanel .bhq b { font: 700 16px/1.1 var(--font-display); color: #fff; }
+#modePanel .bhq i { font-style: normal; }
+#modePanel .bhq i.a { color: var(--ally); }
+#modePanel .bhq i.e { color: var(--enemy); }
+#modePanel .hqbar { width: 70px; height: 5px; border-radius: 5px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+#modePanel .hqbar i { display: block; height: 100%; background: var(--enemy); }
 #modePanel .wave { display: flex; align-items: baseline; gap: 8px; }
 #modePanel .wave span { font-size: 10px; letter-spacing: .25em; color: var(--muted); }
 #modePanel .wave b { font: 700 22px/1.15 var(--font-display); color: var(--brass); }

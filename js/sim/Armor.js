@@ -22,15 +22,60 @@ const pitchUp = (p, a) => {
 };
 const pitchDown = (p, a) => pitchUp(p, -a);
 
-export function worldToHull(v, p) { return irot([p[0] - v.x, p[1], p[2] - v.z], v.a); }
-export function hullToWorld(v, p) { const r = rot(p, v.a); return [r[0] + v.x, r[1], r[2] + v.z]; }
-export function dirWorldToHull(v, d) { return irot(d, v.a); }
-export function dirHullToWorld(v, d) { return rot(d, v.a); }
+/** Крен: положительный угол опускает правый борт (+Y к +Z) */
+const rollR = (p, a) => {
+    if (!a) return p;
+    const c = Math.cos(a), s = Math.sin(a);
+    return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c];
+};
+const unroll = (p, a) => rollR(p, -a);
+
+/*
+ * Корпус стоит на рельефе: v.y — высота опоры, v.pitch — тангаж (+ нос вверх), v.roll — крен.
+ * Мир = сдвиг(x, y, z) · курс(a) · тангаж · крен · точка корпуса.
+ */
+export function worldToHull(v, p) {
+    const q = irot([p[0] - v.x, p[1] - (v.y || 0), p[2] - v.z], v.a);
+    return unroll(pitchDown(q, v.pitch || 0), v.roll || 0);
+}
+export function hullToWorld(v, p) {
+    const r = rot(pitchUp(rollR(p, v.roll || 0), v.pitch || 0), v.a);
+    return [r[0] + v.x, r[1] + (v.y || 0), r[2] + v.z];
+}
+export function dirWorldToHull(v, d) { return unroll(pitchDown(irot(d, v.a), v.pitch || 0), v.roll || 0); }
+export function dirHullToWorld(v, d) { return rot(pitchUp(rollR(d, v.roll || 0), v.pitch || 0), v.a); }
 
 function turretOrigin(v) { return [v.def.turret.x, v.def.dims.H, 0]; }
 
+/*
+ * Кормовая башня (у «Ратте»): turret2 — на крыше корпуса в def.turret2.origin, поворот v.t2.yaw;
+ * gun2 — цапфы def.turret2.pivot, качание v.t2.pitch.
+ */
+const T2_ZERO = { yaw: 0, pitch: 0 };
+function t2ToHull(v, frame, p, dir) {
+    const F = v.def.turret2, st = v.t2 || T2_ZERO;
+    let q = p;
+    if (frame === "gun2") {
+        q = pitchUp(q, st.pitch);
+        if (!dir) q = [q[0] + F.pivot[0], q[1] + F.pivot[1], q[2] + F.pivot[2]];
+    }
+    const r = rot(q, st.yaw);
+    return dir ? r : [r[0] + F.origin[0], r[1] + F.origin[1], r[2] + F.origin[2]];
+}
+function hullToT2(v, frame, p, dir) {
+    const F = v.def.turret2, st = v.t2 || T2_ZERO;
+    let q = dir ? irot(p, st.yaw) : irot([p[0] - F.origin[0], p[1] - F.origin[1], p[2] - F.origin[2]], st.yaw);
+    if (frame === "gun2") {
+        if (!dir) q = [q[0] - F.pivot[0], q[1] - F.pivot[1], q[2] - F.pivot[2]];
+        q = pitchDown(q, st.pitch);
+    }
+    return q;
+}
+const isT2 = (frame) => frame === "turret2" || frame === "gun2";
+
 export function frameToHull(v, frame, p) {
     if (frame === "hull") return p;
+    if (isT2(frame)) return t2ToHull(v, frame, p, false);
     let q = p;
     if (frame === "gun") {
         const piv = v.def.gunPivot;
@@ -44,6 +89,7 @@ export function frameToHull(v, frame, p) {
 
 export function hullToFrame(v, frame, p) {
     if (frame === "hull") return p;
+    if (isT2(frame)) return hullToT2(v, frame, p, false);
     const o = turretOrigin(v);
     let q = irot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], v.turretRel());
     if (frame === "gun") {
@@ -55,6 +101,7 @@ export function hullToFrame(v, frame, p) {
 
 export function dirFrameToHull(v, frame, d) {
     if (frame === "hull") return d;
+    if (isT2(frame)) return t2ToHull(v, frame, d, true);
     let q = d;
     if (frame === "gun") q = rot(pitchUp(q, v.gp || 0), v.gunRel());
     return rot(q, v.turretRel());
@@ -62,6 +109,7 @@ export function dirFrameToHull(v, frame, d) {
 
 export function dirHullToFrame(v, frame, d) {
     if (frame === "hull") return d;
+    if (isT2(frame)) return hullToT2(v, frame, d, true);
     let q = irot(d, v.turretRel());
     if (frame === "gun") q = pitchDown(irot(q, v.gunRel()), v.gp || 0);
     return q;
@@ -143,9 +191,10 @@ export function plateInfo(v, hit) {
     const A = v.def.armor;
     const id = hit.id;
     if (hit.part.spaced) {
-        return { thick: hit.part.spaced, vslope: 0, name: hit.part.skirt ? "противокумулятивный экран" : "гусеница", spaced: true };
+        return { thick: hit.part.spaced, vslope: 0, name: hit.part.spacedName || (hit.part.skirt ? "противокумулятивный экран" : "гусеница"), spaced: true, skirt: !!hit.part.skirt };
     }
-    if (id === "barrel") return { thick: 25, vslope: 0, name: "ствол орудия", barrel: true };
+    const md = hit.part.module ? (v.mods ? v.mods[hit.part.module] : v.def.modules.find((m) => m.id === hit.part.module)) : null;
+    if (md && md.type === "barrel") return { thick: 25, vslope: 0, name: "ствол орудия", barrel: true };
     // лист детальной модели: толщина и название — свои, наклон — в самой геометрии
     const pl = hit.part.plate || (hit.part.plates && (hit.part.plates[hit.face] || hit.part.plates.side));
     if (pl) return { thick: pl.mm, vslope: 0, name: pl.name, face: pl.zone, plate: true };

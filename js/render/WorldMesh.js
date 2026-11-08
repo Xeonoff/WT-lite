@@ -47,6 +47,44 @@ function prismGeometry() {
     return g;
 }
 
+/**
+ * Сетка рельефа: квадрат size×size с началом (x0, z0), seg×seg клеток, высоты — из рельефа карты.
+ * UV — по всему квадрату (v = 1 у z0, как у повёрнутой плоскости). shadeOut — затемнение за границей карты.
+ */
+function terrainGeometry(T, x0, z0, size, seg, lift = 0, shadeOut = null) {
+    const n = seg + 1;
+    const pos = new Float32Array(n * n * 3), uv = new Float32Array(n * n * 2);
+    const col = shadeOut ? new Float32Array(n * n * 3) : null;
+    for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+            const k = j * n + i;
+            const x = x0 + (i / seg) * size, z = z0 + (j / seg) * size;
+            pos[k * 3] = x; pos[k * 3 + 1] = T.height(x, z) + lift; pos[k * 3 + 2] = z;
+            uv[k * 2] = i / seg; uv[k * 2 + 1] = 1 - j / seg;
+            if (col) {
+                const S = shadeOut;
+                const out = Math.max(-x, -z, x - S, z - S, 0);
+                const c = 1 - 0.42 * Math.min(1, out / 6);
+                col[k * 3] = c; col[k * 3 + 1] = c * 0.97; col[k * 3 + 2] = c * 0.96;
+            }
+        }
+    }
+    const idx = new Uint32Array(seg * seg * 6);
+    let q = 0;
+    for (let j = 0; j < seg; j++) for (let i = 0; i < seg; i++) {
+        const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+        idx[q++] = a; idx[q++] = c; idx[q++] = b;
+        idx[q++] = b; idx[q++] = c; idx[q++] = d;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    if (col) g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    return g;
+}
+
 export class WorldMesh {
     constructor(world) {
         this.world = world;
@@ -72,10 +110,11 @@ export class WorldMesh {
         const gt = groundTexture(B);
         const tile = 26;
         gt.repeat.set((S + margin * 2) / tile, (S + margin * 2) / tile);
-        const gm = new THREE.MeshStandardMaterial({ map: gt, roughness: 0.97, metalness: 0 });
-        const ground = new THREE.Mesh(new THREE.PlaneGeometry(S + margin * 2, S + margin * 2), gm);
-        ground.rotation.x = -Math.PI / 2;
-        ground.position.set(S / 2, 0, S / 2);
+        const gm = new THREE.MeshStandardMaterial({ map: gt, roughness: 0.97, metalness: 0, vertexColors: true });
+        // рельеф; за границей карты земля темнее (вместо отдельной плоскости-маски)
+        const T = w.terrain;
+        const size = S + margin * 2;
+        const ground = new THREE.Mesh(terrainGeometry(T, -margin, -margin, size, Math.round(size / 4), 0, S), gm);
         ground.receiveShadow = true;
         this.group.add(ground);
 
@@ -173,9 +212,7 @@ export class WorldMesh {
         dt.colorSpace = THREE.SRGBColorSpace;
         dt.anisotropy = 4;
         const dm = new THREE.MeshStandardMaterial({ map: dt, transparent: true, roughness: 1, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-        const decal = new THREE.Mesh(new THREE.PlaneGeometry(S, S), dm);
-        decal.rotation.x = -Math.PI / 2;
-        decal.position.set(S / 2, 0.02, S / 2);
+        const decal = new THREE.Mesh(terrainGeometry(T, 0, 0, S, Math.round(S / 2), 0.05), dm);
         decal.receiveShadow = true;
         this.group.add(decal);
     }
@@ -190,7 +227,8 @@ export class WorldMesh {
             const p = R.pts[i], q = R.pts[Math.min(n - 1, i + 1)], o = R.pts[Math.max(0, i - 1)];
             const dx = q[0] - o[0], dz = q[1] - o[1], l = Math.hypot(dx, dz) || 1;
             const nx = -dz / l, nz = dx / l;
-            pos.push(p[0] + nx * R.w / 2, 0.07, p[1] + nz * R.w / 2, p[0] - nx * R.w / 2, 0.07, p[1] - nz * R.w / 2);
+            const wy = w.terrain.waterY + (R.frozen ? 0.04 : 0.02);
+            pos.push(p[0] + nx * (R.w / 2 + 0.6), wy, p[1] + nz * (R.w / 2 + 0.6), p[0] - nx * (R.w / 2 + 0.6), wy, p[1] - nz * (R.w / 2 + 0.6));
             if (i < n - 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
         }
         const geo = new THREE.BufferGeometry();
@@ -212,7 +250,7 @@ export class WorldMesh {
         const wood = new THREE.MeshStandardMaterial({ color: R.frozen ? 0x7d7a74 : 0x6b5638, roughness: 0.95 });
         for (const c of w.bridges) {
             const g = new THREE.Group();
-            g.position.set(c.x, 0, c.z);
+            g.position.set(c.x, c.kind === "bridge" ? c.y : w.terrain.waterY, c.z);
             g.rotation.y = -(c.a + Math.PI / 2);
             if (c.kind === "bridge") {
                 const deck = new THREE.Mesh(new THREE.BoxGeometry(c.hl * 2, 0.12, c.hw * 2), wood);
@@ -226,8 +264,8 @@ export class WorldMesh {
                     g.add(rail);
                 }
                 for (const sx of [-0.3, 0.3]) for (const s of [-1, 1]) {
-                    const pile = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1, 6), wood);
-                    pile.position.set(sx * c.hl, 0, s * (c.hw - 0.3));
+                    const pile = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 3, 6), wood);
+                    pile.position.set(sx * c.hl, -1.2, s * (c.hw - 0.3));
                     g.add(pile);
                 }
             } else {
@@ -256,7 +294,7 @@ export class WorldMesh {
         const roofs = instanced(prismGeometry(), roofMat, gable.length);
         const flats = instanced(box, flatMat, flat.length * 2);
         blds.forEach((b, i) => {
-            setInst(walls, i, b.x, 0, b.z, -b.a, b.hl * 2, b.h, b.hw * 2);
+            setInst(walls, i, b.x, b.y - 0.6, b.z, -b.a, b.hl * 2, b.h + 0.6, b.hw * 2);
             tmpC.setHex(B.wall[b.col % B.wall.length]);
             if (b.kind === "ruin") tmpC.multiplyScalar(0.8);
             walls.setColorAt(i, tmpC);
@@ -264,13 +302,13 @@ export class WorldMesh {
         gable.forEach((b, i) => {
             const rh = Math.min(b.hw * 1.1, 3.4);
             // конёк вдоль длинной стороны
-            setInst(roofs, i, b.x, b.h, b.z, -b.a, b.hl * 2 + 0.6, rh, b.hw * 2 + 0.8);
+            setInst(roofs, i, b.x, b.y + b.h, b.z, -b.a, b.hl * 2 + 0.6, rh, b.hw * 2 + 0.8);
             tmpC.setHex(B.roof[b.rcol % B.roof.length]);
             roofs.setColorAt(i, tmpC);
         });
         flat.forEach((b, i) => {
-            setInst(flats, i * 2, b.x, b.h, b.z, -b.a, b.hl * 2 + 0.3, 0.35, b.hw * 2 + 0.3);
-            setInst(flats, i * 2 + 1, b.x, b.h, b.z, -b.a, b.hl * 2 - 0.8, 0.42, b.hw * 2 - 0.8);
+            setInst(flats, i * 2, b.x, b.y + b.h, b.z, -b.a, b.hl * 2 + 0.3, 0.35, b.hw * 2 + 0.3);
+            setInst(flats, i * 2 + 1, b.x, b.y + b.h, b.z, -b.a, b.hl * 2 - 0.8, 0.42, b.hw * 2 - 0.8);
             tmpC.setHex(B.roof[b.rcol % B.roof.length]).multiplyScalar(0.92);
             flats.setColorAt(i * 2, tmpC);
             tmpC.multiplyScalar(0.8);
@@ -330,7 +368,7 @@ export class WorldMesh {
 
     placeTree(t) {
         const d = this.treeDims(t);
-        const base = new THREE.Matrix4().makeTranslation(t.x, 0, t.z);
+        const base = new THREE.Matrix4().makeTranslation(t.x, t.y - 0.15, t.z);
         let rot = new THREE.Matrix4();
         if (t.fallen) {
             const axis = new THREE.Vector3(-Math.sin(t.fallA), 0, Math.cos(t.fallA));
@@ -351,7 +389,7 @@ export class WorldMesh {
         const mat = new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true });
         const m = instanced(geo, mat, w.bushes.length);
         w.bushes.forEach((b, i) => {
-            setInst(m, i, b.x, b.r * 0.32, b.z, b.tint * 6, b.r, b.r * 0.62, b.r * (0.85 + b.tint * 0.3));
+            setInst(m, i, b.x, b.y + b.r * 0.32, b.z, b.tint * 6, b.r, b.r * 0.62, b.r * (0.85 + b.tint * 0.3));
             tmpC.setHex(B.bush[i % B.bush.length]).multiplyScalar(0.85 + b.tint * 0.3);
             m.setColorAt(i, tmpC);
         });
@@ -365,7 +403,7 @@ export class WorldMesh {
         const mat = new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true });
         const m = instanced(geo, mat, w.rocks.length);
         w.rocks.forEach((o, i) => {
-            setInst(m, i, o.x, o.h * 0.3, o.z, o.rot, o.r * o.sx, o.h * 0.75, o.r * o.sz);
+            setInst(m, i, o.x, o.y + o.h * 0.3, o.z, o.rot, o.r * o.sx, o.h * 0.75, o.r * o.sz);
             tmpC.setHex(B.rock[i % B.rock.length]).multiplyScalar(0.85 + o.tint * 0.3);
             m.setColorAt(i, tmpC);
         });
@@ -378,7 +416,7 @@ export class WorldMesh {
         const geo = new THREE.BoxGeometry(1, 1, 1);
         geo.translate(0, 0.5, 0);
         this.fenceMesh = instanced(geo, new THREE.MeshStandardMaterial({ color: B.fence, roughness: 1 }), w.fences.length);
-        w.fences.forEach((f, i) => setInst(this.fenceMesh, i, f.x, 0, f.z, -f.a, f.hl * 2, f.h, 0.14));
+        w.fences.forEach((f, i) => setInst(this.fenceMesh, i, f.x, f.y - 0.3, f.z, -f.a, f.hl * 2, f.h + 0.3, 0.14));
         this.fenceMesh.instanceMatrix.needsUpdate = true;
         this.group.add(this.fenceMesh);
     }
@@ -400,7 +438,7 @@ export class WorldMesh {
             for (let k = 0; k < 2; k++) {
                 const off = (k ? 0.5 : -0.5) * h.hl;
                 const x = h.x + Math.cos(h.a) * off, z = h.z + Math.sin(h.a) * off;
-                setInst(this.hedgeMesh, i * 2 + k, x, h.h * 0.42, z, -h.a + h.tint, h.hl * 0.68, h.h * 0.62, h.hw * 1.35);
+                setInst(this.hedgeMesh, i * 2 + k, x, w.h(x, z) + h.h * 0.42, z, -h.a + h.tint, h.hl * 0.68, h.h * 0.62, h.hw * 1.35);
                 tmpC.setHex(B.bush[(i + k) % B.bush.length]).multiplyScalar(0.8 + h.tint * 0.25);
                 this.hedgeMesh.setColorAt(i * 2 + k, tmpC);
             }
@@ -414,7 +452,7 @@ export class WorldMesh {
         const w = this.world, B = this.biome;
         const geo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
         this.hayMesh = instanced(geo, new THREE.MeshStandardMaterial({ color: B.hay, roughness: 1 }), w.hay.length);
-        w.hay.forEach((hy, i) => setInst(this.hayMesh, i, hy.x, 0, hy.z, 0, hy.r, hy.h, hy.r));
+        w.hay.forEach((hy, i) => setInst(this.hayMesh, i, hy.x, hy.y - 0.1, hy.z, 0, hy.r, hy.h, hy.r));
         this.hayMesh.instanceMatrix.needsUpdate = true;
         this.group.add(this.hayMesh);
     }
@@ -431,7 +469,7 @@ export class WorldMesh {
         else if (e.type === "fence") {
             const f = e.o;
             // повалить забор
-            setInst(this.fenceMesh, f.idx, f.x, 0.05, f.z, -f.a + 0.3, f.hl * 2, 0.12, 1.0);
+            setInst(this.fenceMesh, f.idx, f.x, f.y + 0.05, f.z, -f.a + 0.3, f.hl * 2, 0.12, 1.0);
             this.fenceMesh.instanceMatrix.needsUpdate = true;
         } else if (e.type === "hay") this.hide(this.hayMesh, e.o.idx);
         else if (e.type === "hedge") {
@@ -439,7 +477,8 @@ export class WorldMesh {
             // пролом: остаются низкие обломки кустарника
             for (let k = 0; k < 2; k++) {
                 const off = (k ? 0.5 : -0.5) * h.hl;
-                setInst(this.hedgeMesh, h.idx * 2 + k, h.x + Math.cos(h.a) * off, 0.15, h.z + Math.sin(h.a) * off, -h.a, h.hl * 0.6, 0.35, h.hw * 1.1);
+                const x = h.x + Math.cos(h.a) * off, z = h.z + Math.sin(h.a) * off;
+                setInst(this.hedgeMesh, h.idx * 2 + k, x, this.world.h(x, z) + 0.15, z, -h.a, h.hl * 0.6, 0.35, h.hw * 1.1);
             }
             this.hedgeMesh.instanceMatrix.needsUpdate = true;
         }
@@ -450,7 +489,7 @@ export class WorldMesh {
         this.pointMeshes = [];
         for (const p of this.world.points) {
             const g = new THREE.Group();
-            g.position.set(p.x, 0, p.z);
+            g.position.set(p.x, p.y, p.z);
             const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, depthWrite: false });
             const ring = new THREE.Mesh(new THREE.RingGeometry(p.r - 0.7, p.r, 72), ringMat);
             ring.rotation.x = -Math.PI / 2;
@@ -511,16 +550,18 @@ export class WorldMesh {
 
     /* ─────────── Граница карты ─────────── */
     buildBorder() {
-        const S = this.world.S, M = 300;
-        const shape = new THREE.Shape([new THREE.Vector2(-M, -M), new THREE.Vector2(S + M, -M), new THREE.Vector2(S + M, S + M), new THREE.Vector2(-M, S + M)]);
-        shape.holes.push(new THREE.Path([new THREE.Vector2(0, 0), new THREE.Vector2(0, S), new THREE.Vector2(S, S), new THREE.Vector2(S, 0)]));
-        const m = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: 0x1a0f0c, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }));
-        m.rotation.x = Math.PI / 2;
-        m.position.y = 0.08;
-        this.group.add(m);
-        const lineGeo = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0.1, 0), new THREE.Vector3(S, 0.1, 0), new THREE.Vector3(S, 0.1, S), new THREE.Vector3(0, 0.1, S), new THREE.Vector3(0, 0.1, 0),
-        ]);
+        const S = this.world.S, T = this.world.terrain;
+        const pts = [];
+        const corners = [[0, 0], [S, 0], [S, S], [0, S], [0, 0]];
+        for (let c = 0; c < 4; c++) {
+            const [ax, az] = corners[c], [bx, bz] = corners[c + 1];
+            for (let k = 0; k < S / 4; k++) {
+                const x = ax + (bx - ax) * k / (S / 4), z = az + (bz - az) * k / (S / 4);
+                pts.push(new THREE.Vector3(x, T.height(x, z) + 0.15, z));
+            }
+        }
+        pts.push(pts[0].clone());
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
         this.group.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0xff5040, transparent: true, opacity: 0.7 })));
     }
 

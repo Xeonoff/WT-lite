@@ -93,17 +93,26 @@ const MODULE_COL = {
  * внутри видны модули и экипаж.
  */
 export function buildArmorModel(def) {
-    const fake = { def, turretRel: () => 0, gunRel: () => 0 };
+    // кормовая башня (у «Ратте») — назад, как на модели
+    const fake = { def, turretRel: () => 0, gunRel: () => 0, t2: def.turret2 ? { yaw: Math.PI, pitch: 0 } : null };
     const root = new THREE.Group();
-    const frames = {
-        hull: root,
-        turret: new THREE.Group(),
-        gun: new THREE.Group(),
+    const mkFrames = (base) => {
+        const f = { hull: base, turret: new THREE.Group(), gun: new THREE.Group() };
+        f.turret.position.set(def.turret.x, def.dims.H, 0);
+        f.gun.position.set(def.gunPivot[0], def.gunPivot[1], def.gunPivot[2]);
+        base.add(f.turret);
+        f.turret.add(f.gun);
+        if (def.turret2) {
+            f.turret2 = new THREE.Group(); f.gun2 = new THREE.Group();
+            f.turret2.position.set(...def.turret2.origin);
+            f.turret2.rotation.y = -Math.PI;
+            f.gun2.position.set(...def.turret2.pivot);
+            base.add(f.turret2);
+            f.turret2.add(f.gun2);
+        }
+        return f;
     };
-    frames.turret.position.set(def.turret.x, def.dims.H, 0);
-    frames.gun.position.set(def.gunPivot[0], def.gunPivot[1], def.gunPivot[2]);
-    root.add(frames.turret);
-    frames.turret.add(frames.gun);
+    const frames = mkFrames(root);
     const faces = [];
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x0b0e12, transparent: true, opacity: 0.55 });
     for (const part of def.parts) {
@@ -128,11 +137,7 @@ export function buildArmorModel(def) {
     }
     // модули и экипаж (видны в режиме «модули»)
     const inner = new THREE.Group();
-    const innerFrames = { hull: inner, turret: new THREE.Group(), gun: new THREE.Group() };
-    innerFrames.turret.position.copy(frames.turret.position);
-    innerFrames.gun.position.copy(frames.gun.position);
-    inner.add(innerFrames.turret);
-    innerFrames.turret.add(innerFrames.gun);
+    const innerFrames = mkFrames(inner);
     for (const m of def.modules) {
         if (m.type === "track") continue;
         const sx = m.max[0] - m.min[0], sy = m.max[1] - m.min[1], sz = m.max[2] - m.min[2];

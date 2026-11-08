@@ -14,6 +14,7 @@ export class Hangar {
         this.camera = new THREE.PerspectiveCamera(32, 1, 0.5, 200);
         const hemi = new THREE.HemisphereLight(0xe2ecf6, 0x4a4a38, 2.0);
         const key = new THREE.DirectionalLight(0xfff0d8, 3.4);
+        this.key = key;
         key.position.set(-8, 12, 6);
         key.castShadow = true;
         key.shadow.mapSize.set(1024, 1024);
@@ -129,6 +130,14 @@ export class Hangar {
         if (this.armor) { this.armor.dispose(); this.armor = null; }
         const def = getVehicle(defId);
         this.vm = buildVehicleMesh(def, biome, { full: true });
+        // крупная машина (босс): шире тени, ниже туман
+        const big = Math.max(1, (def.dims.L + def.gun.len * 0.5) / 9);
+        const sc = this.key.shadow.camera;
+        sc.left = -8 * big; sc.right = 8 * big; sc.top = 8 * big; sc.bottom = -8 * big; sc.far = 60 * big;
+        sc.updateProjectionMatrix();
+        this.key.position.set(-8 * big, 12 * big, 6 * big);
+        this.scene.fog.near = 18 * big; this.scene.fog.far = 46 * big;
+        this.camera.far = 200 * big; this.camera.updateProjectionMatrix();
         this.vm.root.position.x = -(Math.max(def.dims.L / 2, def.turret.x + def.turret.hl + def.gun.len) - def.dims.L / 2) * 0.35;
         this.stand.add(this.vm.root);
         this.def = def;
@@ -169,11 +178,14 @@ export class Hangar {
         const w = innerWidth, h = innerHeight;
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
-        const size = this.def ? Math.max(this.def.dims.L + this.def.gun.len * 0.5, 6) : 7;
+        // босс крупный и высокий — камера дальше, чтобы помещался в окно осмотра
+        const size = this.def ? Math.max(this.def.dims.L + this.def.gun.len * 0.5, 6) * (this.def.boss ? 1.45 : 1) : 7;
         const dist = (size * 2.3 + 5) * this.zoom;
         const az = 0.97;
         this.camera.position.set(Math.cos(this.pitch) * Math.cos(az) * dist, Math.sin(this.pitch) * dist + 1.1, Math.cos(this.pitch) * Math.sin(az) * dist);
-        this.camera.lookAt(0, 1.1, 0);
+        const lookY = this.def ? Math.max(1.1, this.def.dims.H * 0.55) : 1.1;
+        this.camera.position.y += lookY - 1.1;
+        this.camera.lookAt(0, lookY, 0);
         this.lastOffset = offset;
         if (this.onHover && this.mode !== "model") {
             const pk = this.pick();
@@ -201,7 +213,7 @@ export class Hangar {
         this.scene.add(vm.root);
         const rt = new THREE.WebGLRenderTarget(w * 2, h * 2, { samples: 4 });
         rt.texture.colorSpace = THREE.SRGBColorSpace;
-        const cam = new THREE.PerspectiveCamera(26, w / h, 0.5, 100);
+        const cam = new THREE.PerspectiveCamera(26, w / h, 0.5, 400);
         const size = def.dims.L + def.gun.len * 0.6;
         const d = size * 2.0 + 3;
         cam.position.set(d * 0.15, d * 0.62, d * 0.78);

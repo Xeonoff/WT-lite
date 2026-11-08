@@ -10,8 +10,8 @@ import { Events } from "../core/Events.js";
 import { angDiff, clamp } from "../core/Utils.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { SHELLS, SHELL_TYPES } from "../data/Shells.js";
-import { applyOwn, unpackRes, F_DEAD, F_FIRE, F_SPOTTED, F_SMOKE, INPUT_HZ, WORLD_LISTS, r2 } from "./Protocol.js";
-import { driveVehicle, vehicleObb } from "../sim/Physics.js";
+import { applyOwn, unpackRes, F_DEAD, F_FIRE, F_SPOTTED, F_SMOKE, INPUT_HZ, WORLD_LISTS, STATIONS_NET, r2 } from "./Protocol.js";
+import { driveVehicle, vehicleObb, settleOnGround } from "../sim/Physics.js";
 import { collideStatic } from "../sim/World.js";
 
 const INTERP = 0.12;        // задержка интерполяции чужих машин, с
@@ -25,12 +25,23 @@ class NetMode {
         this.tickets = [C.TICKETS, C.TICKETS];
         this.timeLeft = C.TIME;
         this.points = b.world.points.map((p) => ({ ...p, owner: -1, prog: 0, n: [0, 0] }));
-        this.kind = b.mode === "duel" ? "duel" : "domination";
-        this.freeSpawns = this.kind === "duel";
+        this.kind = b.mode === "duel" ? "duel" : b.mode === "boss" ? "boss" : "domination";
+        this.freeSpawns = this.kind === "duel" || this.kind === "boss";
         this.left = [0, 0];
+        this.boss = { eff: 1, crew: 20, sys: [2, 1, 2, 2, 8, 1, 1], hq: 0, dist: 0, dead: false };
+        this.pickups = [];
+        if (this.kind === "boss") for (const p of this.points) { p.owner = p.hq ? b.playerTeam : -1; p.prog = 0; }
     }
     apply(m) {
         if (m.k === "duel") { this.timeLeft = m.tl; this.left = m.left; return; }
+        if (m.k === "boss") {
+            this.timeLeft = m.tl;
+            this.boss = { eff: m.e, crew: m.c, sys: m.s, hq: m.hq, dist: m.d, dead: !!m.x };
+            if (this.points[0]) { this.points[0].owner = this.b.playerTeam; this.points[0].prog = -m.hq * 100; }
+            (m.p || []).forEach(([owner, prog], i) => { const p = this.points[i + 1]; if (p) { p.owner = owner; p.prog = prog; } });
+            this.pickups = (m.pk || []).map(([id, x, z]) => ({ id, x, z }));
+            return;
+        }
         this.tickets = m.tk;
         this.timeLeft = m.tl;
         m.p.forEach(([owner, prog, n0, n1], i) => {
@@ -41,20 +52,32 @@ class NetMode {
     }
     hud() {
         if (this.kind === "duel") return { kind: "duel", time: this.timeLeft, left: this.left };
+        if (this.kind === "boss") {
+            const B = this.boss;
+            const held = this.intelHeld(), enemy = this.intelHeld(1);
+            return { kind: "boss", time: this.timeLeft, eff: B.eff, crew: B.crew, crewMax: 20, sys: B.sys, hq: B.hq, dist: B.dist, dead: B.dead,
+                intel: held, intelEnemy: enemy, intelMax: this.points.filter((p) => p.intel).length, speedK: 1 + Config.BOSS.SPEED_PER_POINT * enemy,
+                artyCd: Config.BOSS.ARTY_COOLDOWN * Math.pow(Config.BOSS.INTEL_K, held) };
+        }
         return { kind: "domination", tickets: this.tickets, points: this.points, time: this.timeLeft, max: Config.DOMINATION.TICKETS };
     }
     update() {}
     onDestroyed() {}
+    /* артудар в битве с боссом — те же правила, что на сервере (для подсказок и проверки дальности) */
+    intelHeld(team = 0) { return this.points.filter((p) => p.intel && p.owner === team).length; }
+    artyCooldown(v) { return this.kind === "boss" && v.team === 0 ? Config.BOSS.ARTY_COOLDOWN * Math.pow(Config.BOSS.INTEL_K, this.intelHeld()) : null; }
+    artyRange(v) { return this.kind === "boss" && v.team === 0 ? Config.BOSS.ARTY_RANGE : null; }
 }
 
 export class NetBattle extends Battle {
     /** start — сообщение сервера { b: параметры боя, me: { pid, name, team, lineup }, full: состояние } */
     constructor(start, net) {
         const me = start.me;
-        super({ replica: true, ...start.b, pilots: [{ id: me.pid, name: me.name, team: me.team, lineup: me.lineup, local: true }] });
+        super({ replica: true, ...start.b, pilots: [{ id: me.pid, name: me.name, team: me.team, nation: me.nation, lineup: me.lineup, local: true }] });
         this.net = net;
         this.online = true;
-        this.nation = this.teamNation[me.team];
+        // нация пилота (в битве с боссом у игроков одной команды могут быть разные нации)
+        this.nation = me.nation || this.teamNation[me.team];
         this.enemyNation = this.teamNation[1 - me.team];
         this.modeCtl = new NetMode(this);
         this.byId = new Map();
@@ -95,6 +118,7 @@ export class NetBattle extends Battle {
         v.spawnT = this.time;
         v.buf = [];
         v.visible[v.team] = true;
+        settleOnGround(v, this.world);
         if (o.dead) {
             v.kill(o.cause);
             v.deathT = this.time - 60;
@@ -132,6 +156,7 @@ export class NetBattle extends Battle {
             if (!v) continue;
             seen.add(v);
             const st = { tm: s.tm, x: a[1], z: a[2], a: a[3], v: a[4], w: a[5], tr: a[6], gp: a[10] || 0 };
+            if (a[11] && v.stn) v.stTarget = a[11];
             // машина снова появилась из засвета — старые точки буфера не годятся для интерполяции
             if (!v.visible[T]) v.buf.length = 0;
             if (!v.buf.length) { v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.gp = st.gp; }
@@ -192,7 +217,8 @@ export class NetBattle extends Battle {
                     if (!v) break;
                     v.recoil = 1;
                     v.lastShot = this.time;
-                    Events.emit("shot", { v, def: SHELLS[e.s], pos: e.p, dir: e.d });
+                    if (e.st) v.recoil = 0;
+                    Events.emit("shot", { v, def: SHELLS[e.s], pos: e.p, dir: e.d, st: e.st });
                     break;
                 }
                 case "sh+": this.addShot(e.s); break;
@@ -255,6 +281,9 @@ export class NetBattle extends Battle {
                 }
                 case "ashell": Events.emit("artyShell", { x: e.x, z: e.z }); break;
                 case "wc": this.worldChange(e); break;
+                case "bn": Events.emit("bossNote", { v: V(e.v), text: e.t, kind: e.k }); break;
+                case "pick": { const v = V(e.v); if (v) Events.emit("pickup", { v, id: e.id, n: e.n }); break; }
+                case "baim": { const tg = V(e.tg); if (tg) Events.emit("bossAim", { v: V(e.v), target: tg, t: e.t }); break; }
             }
         }
     }
@@ -267,6 +296,7 @@ export class NetBattle extends Battle {
         else if (e.ty === "fence") this.world.breakFence(o);
         else if (e.ty === "hay") this.world.breakHay(o);
         else if (e.ty === "hedge") this.world.breakHedge(o);
+        else if (e.ty === "building") this.world.crushBuilding(o);
     }
 
     addShot([id, sid, p, d, speed, owner, flags, life]) {
@@ -291,10 +321,19 @@ export class NetBattle extends Battle {
         const rt = this.time - INTERP;
         for (const v of this.vehicles) {
             if (v.dead || !v.buf.length) continue;
-            if (v.isPlayer) { if (dt > 0) this.predictOwn(v, rdt); continue; }
+            if (v.isPlayer) { if (dt > 0) this.predictOwn(v, rdt); settleOnGround(v, this.world); continue; }
             const ox = v.x, oz = v.z, otr = v.tr;
             const st = this.sample(v.buf, rt);
             v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.v = st.v; v.w = st.w; v.gp = st.gp;
+            settleOnGround(v, this.world);
+            // станции босса — плавно к углам из снимка
+            if (v.stTarget && dt > 0) STATIONS_NET.forEach((k, i) => {
+                const S = v.stn[k], T = v.stTarget[i];
+                if (!S || !T) return;
+                const kk = Math.min(1, dt * 8);
+                S.yaw += angDiff(S.yaw, T[0]) * kk;
+                S.pitch += (T[1] - S.pitch) * kk;
+            });
             if (dt > 0) {
                 const hw = v.def.dims.W / 2;
                 // гусеницы крутятся по фактическому смещению, без скачков после телепортации
@@ -336,6 +375,7 @@ export class NetBattle extends Battle {
             driveVehicle(p, h);
             const push = collideStatic(this.world, p, vehicleObb(p), h);
             if (push) { p.x += push.x; p.z += push.z; }
+            settleOnGround(p, this.world);
             this.aimTurret(p, h);
             left -= h;
         }
@@ -420,7 +460,7 @@ export class NetBattle extends Battle {
         if (!v || v.dead || this.ended) return { ok: false, reason: "недоступно" };
         const left = this.artyLeft(v);
         if (left > 0) return { ok: false, reason: "перезарядка " + Math.ceil(left) + " с" };
-        if (Math.hypot(x - v.x, z - v.z) > Config.ARTY.RANGE) return { ok: false, reason: "слишком далеко" };
+        if (Math.hypot(x - v.x, z - v.z) > this.artyRange(v)) return { ok: false, reason: "слишком далеко" };
         this.act("arty", { x: r2(x), z: r2(z) });
         return { ok: true };
     }

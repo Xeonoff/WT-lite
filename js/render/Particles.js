@@ -115,8 +115,11 @@ class System {
             const dr = Math.max(0, 1 - this.drag[i] * dt);
             V[i3] *= dr; V[i3 + 1] = V[i3 + 1] * dr - this.grav[i] * dt; V[i3 + 2] *= dr;
             P[i3] += V[i3] * dt; P[i3 + 1] += V[i3 + 1] * dt; P[i3 + 2] += V[i3 + 2] * dt;
-            if (P[i3 + 1] < 0.05) {
-                P[i3 + 1] = 0.05;
+            // земля — рельеф (высоту считаем только у низких частиц)
+            const T = this.terrain;
+            const gy = T && P[i3 + 1] < this.topY ? T.height(P[i3], P[i3 + 2]) + 0.05 : 0.05;
+            if (P[i3 + 1] < gy) {
+                P[i3 + 1] = gy;
                 if (this.bounce[i]) { V[i3 + 1] = -V[i3 + 1] * 0.3; V[i3] *= 0.6; V[i3 + 2] *= 0.6; this.vr[i] *= 0.5; }
                 else V[i3 + 1] = 0;
             }
@@ -162,6 +165,15 @@ export class Particles {
     }
 
     setQuality(q) { this.scale = q === "low" ? 0.45 : q === "medium" ? 0.75 : 1; }
+
+    /** Рельеф текущей карты: частицы отскакивают от земли, пыль и дым рождаются на ней */
+    setTerrain(T) {
+        this.terrain = T;
+        let top = 0.05;
+        if (T) for (let i = 0; i < T.h.length; i++) if (T.h[i] > top) top = T.h[i];
+        for (const sys of [this.add, this.norm]) { sys.terrain = T; sys.topY = top + 0.1; }
+    }
+    gy(x, z) { return this.terrain ? this.terrain.height(x, z) : 0; }
     count(n) { return Math.max(1, Math.round(n * this.scale)); }
 
     update(dt) {
@@ -194,7 +206,7 @@ export class Particles {
         const n = this.count(cal / 8);
         for (let i = 0; i < n; i++) {
             const a = rnd(TAU), sp = rnd(6, 14);
-            this.norm.emit({ x: p[0], y: 0.4, z: p[2], vx: Math.cos(a) * sp, vy: rnd(0.3, 1.2), vz: Math.sin(a) * sp, life: rnd(1, 1.8), s0: 1.5, s1: 4.5, c0: [...dust, 0.35], c1: [...dust, 0], drag: 2.4 });
+            this.norm.emit({ x: p[0], y: this.gy(p[0], p[2]) + 0.4, z: p[2], vx: Math.cos(a) * sp, vy: rnd(0.3, 1.2), vz: Math.sin(a) * sp, life: rnd(1, 1.8), s0: 1.5, s1: 4.5, c0: [...dust, 0.35], c1: [...dust, 0], drag: 2.4 });
         }
     }
 
@@ -222,10 +234,10 @@ export class Particles {
         this.explosion(p, 2.4, false, [0.2, 0.2, 0.2]);
         for (let i = 0; i < this.count(40); i++) {
             const a = rnd(TAU), sp = rnd(0.5, 4);
-            this.add.emit({ x: p[0], y: 1.5, z: p[2], vx: Math.cos(a) * sp, vy: rnd(10, 26), vz: Math.sin(a) * sp, life: rnd(0.5, 1.2), s0: rnd(1.5, 3), s1: rnd(2, 4), c0: [1, 0.7, 0.3, 1], c1: [0.8, 0.2, 0.05, 0], drag: 1.4 });
+            this.add.emit({ x: p[0], y: p[1] + 1.5, z: p[2], vx: Math.cos(a) * sp, vy: rnd(10, 26), vz: Math.sin(a) * sp, life: rnd(0.5, 1.2), s0: rnd(1.5, 3), s1: rnd(2, 4), c0: [1, 0.7, 0.3, 1], c1: [0.8, 0.2, 0.05, 0], drag: 1.4 });
         }
         for (let i = 0; i < this.count(30); i++) {
-            this.norm.emit({ x: p[0] + rnd(-1, 1), y: rnd(2, 10), z: p[2] + rnd(-1, 1), vx: rnd(-2, 2), vy: rnd(3, 8), vz: rnd(-2, 2), life: rnd(3, 6), s0: rnd(2, 3), s1: rnd(7, 11), c0: [0.1, 0.09, 0.08, 0.75], c1: [0.25, 0.24, 0.22, 0], drag: 0.6, vr: rnd(-0.4, 0.4) });
+            this.norm.emit({ x: p[0] + rnd(-1, 1), y: p[1] + rnd(2, 10), z: p[2] + rnd(-1, 1), vx: rnd(-2, 2), vy: rnd(3, 8), vz: rnd(-2, 2), life: rnd(3, 6), s0: rnd(2, 3), s1: rnd(7, 11), c0: [0.1, 0.09, 0.08, 0.75], c1: [0.25, 0.24, 0.22, 0], drag: 0.6, vr: rnd(-0.4, 0.4) });
         }
     }
 
@@ -245,7 +257,7 @@ export class Particles {
 
     /** Пыль из-под гусениц */
     trackDust(x, z, col, k) {
-        this.norm.emit({ x: x + rnd(-0.3, 0.3), y: 0.3, z: z + rnd(-0.3, 0.3), vx: rnd(-1, 1), vy: rnd(0.4, 1.4), vz: rnd(-1, 1), life: rnd(0.9, 1.7), s0: 0.7 * k, s1: 2.6 * k, c0: [...col, 0.28 * k], c1: [...col, 0], drag: 1.5, vr: rnd(-0.8, 0.8) });
+        this.norm.emit({ x: x + rnd(-0.3, 0.3), y: this.gy(x, z) + 0.3, z: z + rnd(-0.3, 0.3), vx: rnd(-1, 1), vy: rnd(0.4, 1.4), vz: rnd(-1, 1), life: rnd(0.9, 1.7), s0: 0.7 * k, s1: 2.6 * k, c0: [...col, 0.28 * k], c1: [...col, 0], drag: 1.5, vr: rnd(-0.8, 0.8) });
     }
 
     fire(p, k = 1) {
@@ -260,12 +272,12 @@ export class Particles {
     splash(p, k = 1) {
         for (let i = 0; i < this.count(16 * k); i++) {
             const a = rnd(TAU), sp = rnd(1, 5) * k;
-            this.norm.emit({ x: p[0], y: 0.2, z: p[2], vx: Math.cos(a) * sp, vy: rnd(4, 11) * k, vz: Math.sin(a) * sp, life: rnd(0.6, 1.3), s0: rnd(0.4, 0.8) * k, s1: rnd(1.4, 2.4) * k, c0: [0.85, 0.92, 0.95, 0.75], c1: [0.9, 0.95, 1, 0], grav: 12, drag: 0.8 });
+            this.norm.emit({ x: p[0], y: p[1] + 0.2, z: p[2], vx: Math.cos(a) * sp, vy: rnd(4, 11) * k, vz: Math.sin(a) * sp, life: rnd(0.6, 1.3), s0: rnd(0.4, 0.8) * k, s1: rnd(1.4, 2.4) * k, c0: [0.85, 0.92, 0.95, 0.75], c1: [0.9, 0.95, 1, 0], grav: 12, drag: 0.8 });
         }
     }
 
     markerSmoke(p, col) {
-        this.norm.emit({ x: p[0] + rnd(-0.4, 0.4), y: 0.4, z: p[2] + rnd(-0.4, 0.4), vx: rnd(-0.5, 0.5) + 0.8, vy: rnd(1.5, 3), vz: rnd(-0.5, 0.5) - 0.4, life: rnd(2.5, 4), s0: 0.8, s1: rnd(4, 6), c0: [...col, 0.7], c1: [col[0] * 0.8 + 0.2, col[1] * 0.8 + 0.2, col[2] * 0.8 + 0.2, 0], drag: 0.6, vr: rnd(-0.5, 0.5) });
+        this.norm.emit({ x: p[0] + rnd(-0.4, 0.4), y: this.gy(p[0], p[2]) + 0.4, z: p[2] + rnd(-0.4, 0.4), vx: rnd(-0.5, 0.5) + 0.8, vy: rnd(1.5, 3), vz: rnd(-0.5, 0.5) - 0.4, life: rnd(2.5, 4), s0: 0.8, s1: rnd(4, 6), c0: [...col, 0.7], c1: [col[0] * 0.8 + 0.2, col[1] * 0.8 + 0.2, col[2] * 0.8 + 0.2, 0], drag: 0.6, vr: rnd(-0.5, 0.5) });
     }
 
     tracerGlow(p, col) {

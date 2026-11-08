@@ -11,11 +11,11 @@ export function modState(m) {
     return f >= Config.MOD_DMG ? 0 : f >= Config.MOD_CRIT ? 1 : 2;
 }
 
-const SPEED_F = [1, 0.78, 0.5, 0];
-const TRANS_F = [1, 0.88, 0.62, 0];
-const DRIVE_F = [1, 0.7, 0.45, 0.12];
-const RACK_RELOAD = [1, 1.22, 1.5, 1.8];
-const BREECH_RELOAD = [1, 1.12, 1.32, 1];
+export const SPEED_F = [1, 0.78, 0.5, 0];
+export const TRANS_F = [1, 0.88, 0.62, 0];
+export const DRIVE_F = [1, 0.7, 0.45, 0.12];
+export const RACK_RELOAD = [1, 1.22, 1.5, 1.8];
+export const BREECH_RELOAD = [1, 1.12, 1.32, 1];
 
 export class Vehicle {
     constructor(def, team, x, z, a, opts = {}) {
@@ -74,7 +74,16 @@ export class Vehicle {
         this.stats = { kills: 0, assists: 0, hits: 0, pens: 0, crits: 0, caps: 0, dmg: 0 };
         this.brain = null;
         this.spawnT = 0;
+        // поза на рельефе
+        this.y = 0; this.pitch = 0; this.roll = 0;
+        // кормовая башня и станции вооружения босса (углы относительно корпуса); системы — v.boss (js/sim/Ratte.js)
+        if (def.turret2) this.t2 = { yaw: Math.PI, pitch: 0 };
+        if (def.boss) this.stn = { t2: this.t2, flak_l: { yaw: Math.PI, pitch: 0 }, flak_r: { yaw: Math.PI, pitch: 0 }, mg_l: { yaw: 0, pitch: 0 }, mg_r: { yaw: 0, pitch: 0 } };
+        this.boss = null;
     }
+
+    /** Меньше стольких живых — машина потеряна (у босса свой порог) */
+    minCrew() { return this.def.minCrew || Config.CREW.MIN_ALIVE; }
 
     /* ─────────── Экипаж ─────────── */
     seatOk(name) {
@@ -96,36 +105,45 @@ export class Vehicle {
     /* ─────────── Подвижность ─────────── */
     st(id) { return modState(this.mods[id]); }
 
-    tracksOk() { return this.mods.trackL.hp > 0 && this.mods.trackR.hp > 0; }
+    tracksOk() {
+        if (this.boss) return this.boss.tracksOk();
+        return this.mods.trackL.hp > 0 && this.mods.trackR.hp > 0;
+    }
 
     canDrive() {
+        if (this.boss) return this.boss.canDrive();
         return !this.dead && !this.static && !this.repair && this.seatOk("driver") &&
             this.mods.engine.hp > 0 && this.mods.transmission.hp > 0 && this.tracksOk();
     }
 
     maxSpeed() {
+        if (this.boss) return this.boss.maxSpeed();
         if (!this.canDrive()) return 0;
         let f = SPEED_F[this.st("engine")] * TRANS_F[this.st("transmission")];
         if (this.fire) f *= 0.85;
         return (this.def.mob.speed / 3.6) * f;
     }
     maxReverse() {
+        if (this.boss) return this.boss.maxReverse();
         if (!this.canDrive()) return 0;
         const f = SPEED_F[this.st("engine")] * (this.st("transmission") >= 2 ? 0.4 : 1);
         return (this.def.mob.reverse / 3.6) * f;
     }
     accel() {
+        if (this.boss) return this.boss.accel();
         const pw = this.def.mob.pw;
         return clamp(0.8 + pw * 0.085, 1.3, 4.2) * SPEED_F[this.st("engine")] * (0.6 + 0.4 * this.crewEff("driver"));
     }
     /** Скорость поворота корпуса: ранение мехвода замедляет поворот */
     turnRate() {
+        if (this.boss) return this.boss.turnRate();
         if (!this.canDrive()) return 0;
         const drv = this.crewEff("driver");
         return this.def.mob.hull * 1.15 * DEG * drv * [1, 0.9, 0.7, 0][this.st("transmission")] * (this.st("engine") >= 2 ? 0.75 : 1);
     }
     /** Скорость наводки башни / орудия в рубке */
     turretRate() {
+        if (this.boss) return this.boss.turretRate();
         if (this.dead) return 0;
         if (!this.seatOk("gunner")) return 0;
         let f = 0.6 + 0.4 * this.seatHp("gunner");
@@ -141,6 +159,7 @@ export class Vehicle {
 
     /** Время перезарядки: растёт при ранении/гибели заряжающего и повреждении боеукладки */
     reloadTime(sid) {
+        if (this.boss) return this.boss.reloadTime();
         const g = this.def.gun;
         let m = 1;
         if (this.hasSeat("loader")) {
@@ -173,6 +192,7 @@ export class Vehicle {
 
     /** Скорость вертикальной наводки, рад/с: без наводчика орудие не качается */
     elevRate() {
+        if (this.boss) return this.boss.elevRate();
         if (this.dead || !this.seatOk("gunner")) return 0;
         return this.def.gun.elevRate * DEG * (0.6 + 0.4 * this.seatHp("gunner"));
     }
@@ -183,13 +203,30 @@ export class Vehicle {
     }
 
 
-    gunBroken() { return this.mods.breech.hp <= 0 || this.mods.barrel.hp <= 0; }
+    gunBroken() {
+        if (this.boss) return this.boss.gunBroken();
+        return this.mods.breech.hp <= 0 || this.mods.barrel.hp <= 0;
+    }
 
     canFire() {
+        if (this.boss) return !this.dead && !!this.loaded && this.reload <= 0 && !this.boss.gunBroken();
         return !this.dead && this.seatOk("gunner") && !this.gunBroken() && !!this.loaded && this.reload <= 0;
     }
 
     totalAmmo() { let n = 0; for (const k in this.ammo) n += this.ammo[k]; return n; }
+
+    /** Снаряды машины: штатные и добытые (трофейные) */
+    shellIds() { return this.extra ? [...this.def.shellIds, ...this.extra] : this.def.shellIds; }
+
+    /** Трофейные снаряды: добавляются к боекомплекту этой машины */
+    addTrophy(n) {
+        const id = this.def.trophyShell;
+        if (!id) return null;
+        if (!this.extra) this.extra = [];
+        if (!this.extra.includes(id)) this.extra.push(id);
+        this.ammo[id] = (this.ammo[id] || 0) + n;
+        return id;
+    }
 
     /** Выбор снаряда (игрок / ИИ) */
     selectShell(sid) {
@@ -293,20 +330,21 @@ export class Vehicle {
         this.updateCrewSwap(dt);
         this.updateRepair(dt);
         this.updateBloom(dt);
+        if (this.boss) this.boss.update(dt, now);
     }
 
     updateReload(dt) {
         if (this.reload > 0) {
             // без наводчика и заряжающего перезарядка не идёт; без орудия — тоже
             if (this.gunBroken()) return;
-            if (!this.hasSeat("loader") && !this.seatOk("gunner")) return;
+            if (this.boss ? !this.boss.canReload() : !this.hasSeat("loader") && !this.seatOk("gunner")) return;
             this.reload -= dt;
             if (this.reload <= 0) {
                 this.reload = 0;
                 const g = this.def.gun;
                 if (!this.loaded) {
                     let sid = this.shell;
-                    if (!this.ammo[sid]) sid = this.def.shellIds.find((s) => this.ammo[s] > 0);
+                    if (!this.ammo[sid]) sid = this.shellIds().find((s) => this.ammo[s] > 0);
                     if (sid) {
                         this.loaded = sid;
                         if (g.mag > 1) this.mag = Math.min(g.mag, this.ammo[sid]);
@@ -316,7 +354,7 @@ export class Vehicle {
             }
         } else if (!this.loaded) {
             // боекомплект пополнили или поменяли тип — начинаем перезарядку
-            const sid = this.ammo[this.shell] ? this.shell : this.def.shellIds.find((s) => this.ammo[s] > 0);
+            const sid = this.ammo[this.shell] ? this.shell : this.shellIds().find((s) => this.ammo[s] > 0);
             if (sid) {
                 this.shell = sid;
                 this.reloadTotal = this.reloadTime(sid);
@@ -327,6 +365,7 @@ export class Vehicle {
 
     /** Автоматическая пересадка экипажа на ключевые места */
     updateCrewSwap(dt) {
+        if (this.boss) { this.boss.updateCrewSwap(dt); return; }
         if (this.swap) {
             const sw = this.swap;
             if (!sw.member.alive) { this.swap = null; return; }
@@ -429,6 +468,7 @@ export class Vehicle {
 
     /** Разброс растёт от движения, поворота корпуса и башни, после выстрела; сводится со временем */
     updateBloom(dt) {
+        if (this.boss) return;
         const vmax = this.def.mob.speed / 3.6;
         const wmax = this.def.mob.hull * DEG;
         const tmax = this.def.mob.turret * 1.5 * DEG;

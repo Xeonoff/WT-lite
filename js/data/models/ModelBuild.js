@@ -101,7 +101,7 @@ export function patchPart({ frame, id, c, n, u, w, h, mm, name, round = false })
     else pts.push(at(w / 2, h / 2), at(-w / 2, h / 2), at(-w / 2, -h / 2), at(w / 2, -h / 2));
     // обход против часовой стрелки при взгляде снаружи
     const plate = { zone: "weak", mm, name, weak: true };
-    return { id, frame, kind: "convex", plate, planes: prismPlanes(pts, n, mm / 1000 + lift, "weak") };
+    return { id, frame, kind: "convex", plate, planes: prismPlanes(pts, n, mm / 1000 + lift, "weak"), center: c.slice(), weak: true };
 }
 
 /** Лист (координаты игры) → список наборов плоскостей выпуклых кусков */
@@ -148,27 +148,45 @@ const rotZ = ([x, y, z], a) => (a ? [x * Math.cos(a) - y * Math.sin(a), x * Math
 export function applyModel(def, spec, moduleNames) {
     const Z = spec.zones, H = spec.H, T = spec.TRACK;
     const plateOf = (zone) => ({ zone, mm: Z[zone].mm, name: Z[zone].g, est: !!Z[zone].est });
+    // деталь попадания по системе: корпус, главная башня (с орудием), кормовая башня (с орудием)
+    const partId = (frame) => (frame === "hull" ? "hull" : frame === "turret2" || frame === "gun2" ? "turret2" : "turret");
 
     /* детали попадания */
     const parts = [];
     for (const P of spec.plates()) {
-        if (P.spaced) continue;
+        if (P.spaced && !P.spacedId) continue;
         const plate = plateOf(P.zone);
-        const id = P.parent === "hull" ? "hull" : "turret";
+        const center = centroid(P.pts.map(toGame));
         for (const planes of platePieces(P.pts.map(toGame), P.mm / 1000, toGame(P.interior), P.zone)) {
-            parts.push({ id, frame: P.parent, kind: "convex", plate, planes });
+            // разнесённые экраны: снаряд теряет на них пробитие и летит дальше
+            if (P.spaced) parts.push({ id: P.spacedId, frame: P.parent, kind: "convex", planes, spaced: P.mm, spacedName: plate.name, skirt: true, center });
+            else parts.push({ id: partId(P.parent), frame: P.parent, kind: "convex", plate, planes, module: P.flak || undefined, center });
         }
     }
     // днище с ходовой между гусеницами — снаряд не проходит под корпусом
-    parts.push({
-        id: "hull", frame: "hull", kind: "box", min: [H.rearBottomZ, 0.04, -H.halfLow], max: [H.noseBottomZ, H.bottom, H.halfLow],
-        plates: { side: plateOf("hull.side.lower"), front: plateOf("hull.front.lower"), rear: plateOf("hull.rear.lower"), bottom: plateOf("hull.bottom.front"), roof: plateOf("hull.bottom.front") },
-    });
+    if (spec.belly) {
+        const Bl = spec.belly;
+        parts.push({ id: "hull", frame: "hull", kind: "box", min: Bl.min, max: Bl.max,
+            plates: { side: plateOf(Bl.side), front: plateOf(Bl.side), rear: plateOf(Bl.side), bottom: plateOf(Bl.zone), roof: plateOf(Bl.zone) } });
+    } else {
+        parts.push({
+            id: "hull", frame: "hull", kind: "box", min: [H.rearBottomZ, 0.04, -H.halfLow], max: [H.noseBottomZ, H.bottom, H.halfLow],
+            plates: { side: plateOf("hull.side.lower"), front: plateOf("hull.front.lower"), rear: plateOf("hull.rear.lower"), bottom: plateOf("hull.bottom.front"), roof: plateOf("hull.bottom.front") },
+        });
+    }
 
-    /* ослабленные зоны модели */
+    /* ослабленные зоны модели: накладки на листы и выступающие колпаки */
     for (const W of spec.weakZones || []) {
+        if (W.box) {
+            const c = toGame(W.c), [w, h, d] = W.box;
+            const plate = { zone: "weak", mm: W.mm, name: W.name, weak: true };
+            // размеры модели: w — по X (поперёк), d — по Z (вдоль) → в игре x ↔ z
+            parts.push({ id: partId(W.parent), frame: W.parent, kind: "box", min: [c[0] - d / 2, c[1] - h / 2, c[2] - w / 2], max: [c[0] + d / 2, c[1] + h / 2, c[2] + w / 2],
+                plates: { side: plate, front: plate, rear: plate, roof: plate, bottom: plate }, module: W.module, center: c, weak: true, weakName: W.name });
+            continue;
+        }
         parts.push(patchPart({
-            frame: W.parent, id: W.parent === "hull" ? "hull" : "turret", c: toGame(W.c), n: toGame(W.n), u: toGame(W.u),
+            frame: W.parent, id: partId(W.parent), c: toGame(W.c), n: toGame(W.n), u: toGame(W.u),
             w: W.w, h: W.h, mm: W.mm, name: W.name, round: !!W.round,
         }));
     }
@@ -176,17 +194,22 @@ export function applyModel(def, spec, moduleNames) {
     /* модули */
     const mods = [];
     const tx0 = spec.SPROCKET.z - spec.SPROCKET.r - 0.04, tx1 = spec.IDLER.z + spec.IDLER.r + 0.04;
-    const z0 = T.x - T.width / 2, z1 = T.x + T.width / 2;
-    for (const [id, zmin, zmax] of [["trackL", -z1, -z0], ["trackR", z0, z1]]) {
-        const m = { id, type: "track", frame: "hull", shape: "box", min: [tx0, 0, zmin], max: [tx1, T.top, zmax], maxHp: 90 };
-        m.c = [(tx0 + tx1) / 2, T.top / 2, (zmin + zmax) / 2];
+    const trackList = spec.tracks || [{ id: "trackL", x: T.x, width: T.width, top: T.top }, { id: "trackR", x: -T.x, width: T.width, top: T.top }];
+    for (const tk of trackList) {
+        // модель: +X — левый борт → в игре z = −x
+        const zc = -tk.x, zmin = zc - tk.width / 2, zmax = zc + tk.width / 2;
+        const m = { id: tk.id, type: "track", frame: "hull", shape: "box", min: [tx0, 0, zmin], max: [tx1, tk.top, zmax], maxHp: tk.hp || 90 };
+        m.c = [(tx0 + tx1) / 2, tk.top / 2, (zmin + zmax) / 2];
         mods.push(m);
-        parts.push({ id, frame: "hull", kind: "box", min: m.min, max: m.max, module: id, spaced: 20 });
+        parts.push({ id: tk.id, frame: "hull", kind: "box", min: m.min, max: m.max, module: tk.id, spaced: tk.mm || 20 });
     }
-    const B = spec.barrel;
-    const barrel = { id: "barrel", type: "barrel", frame: "gun", shape: "box", min: [B.z0, -B.r, -B.r], max: [B.z1, B.r, B.r], c: [(B.z0 + B.z1) / 2, 0, 0], maxHp: 60 };
-    mods.push(barrel);
-    parts.push({ id: "barrel", frame: "gun", kind: "box", min: barrel.min, max: barrel.max, module: "barrel" });
+    const barrels = spec.barrels || [{ id: "barrel", frame: "gun", x: 0, ...spec.barrel, hp: 60 }];
+    for (const B of barrels) {
+        const zc = -(B.x || 0);
+        const barrel = { id: B.id, type: "barrel", frame: B.frame, shape: "box", min: [B.z0, -B.r, zc - B.r], max: [B.z1, B.r, zc + B.r], c: [(B.z0 + B.z1) / 2, 0, zc], maxHp: B.hp || 60 };
+        mods.push(barrel);
+        parts.push({ id: B.id, frame: B.frame, kind: "box", min: barrel.min, max: barrel.max, module: B.id });
+    }
     for (const M of spec.modules) {
         const g = M.game;
         if (!g) continue;
@@ -201,12 +224,13 @@ export function applyModel(def, spec, moduleNames) {
     const seats = {};
     for (const C of spec.crew) {
         if (!def.crew.includes(C.id)) continue;
-        seats[C.id] = { frame: C.parent, c: toGame([C.pos[0], C.pos[1] + 0.30, C.pos[2]]), r: 0.3 };
+        seats[C.id] = { frame: C.parent, c: toGame([C.pos[0], C.pos[1] + 0.30, C.pos[2]]), r: 0.3, open: !!C.open };
     }
 
     /* башня в плане (для схем) и орудие */
     const outline = [];
-    for (const [z, y] of spec.turretProfile) {
+    if (spec.turretPlan) for (const [z, hw] of spec.turretPlan) outline.push([z, hw], [z, -hw]);
+    else for (const [z, y] of spec.turretProfile) {
         const hw = spec.turretHalfWidth(y);
         outline.push([z, hw], [z, -hw]);
     }

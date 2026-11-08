@@ -39,7 +39,7 @@ export class Scene3D {
         this.effects = new Effects(this.scene);
 
         this.vmeshes = new Map();
-        this.cam = { x: 0, z: 0, h: Config.CAMERA.HEIGHT, shake: 0, sx: 0, sz: 0 };
+        this.cam = { x: 0, z: 0, gy: 0, h: Config.CAMERA.HEIGHT, shake: 0, sx: 0, sz: 0 };
         this.raycaster = new THREE.Raycaster();
         this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
         this.tmpV = new THREE.Vector3();
@@ -86,6 +86,9 @@ export class Scene3D {
         this.biome = B;
         this.worldMesh = new WorldMesh(battle.world);
         this.scene.add(this.worldMesh.group);
+        this.terrain = battle.world.terrain;
+        this.particles.setTerrain(this.terrain);
+        this.effects.setTerrain(this.terrain);
         const Wt = battle.weather;
         this.weather = Wt;
         const fogCol = new THREE.Color(B.fog);
@@ -101,8 +104,11 @@ export class Scene3D {
         this.effects.setMarkColor(B.name === "Зима" ? 0x8d949a : B.name === "Пустыня" ? 0x8a7350 : 0x2c2a1f);
         this.dust = B.dust;
         const sp = battle.world.spawns[battle.playerTeam];
-        this.cam.x = sp.x; this.cam.z = sp.z;
+        this.cam.x = sp.x; this.cam.z = sp.z; this.cam.gy = this.gy(sp.x, sp.z);
     }
+
+    /** Высота земли (рельеф текущей карты) */
+    gy(x, z) { return this.terrain ? this.terrain.height(x, z) : 0; }
 
     unloadBattle() {
         for (const [, vm] of this.vmeshes) this.removeVM(vm);
@@ -114,12 +120,16 @@ export class Scene3D {
         }
         this.particles.clear();
         this.effects.clear();
+        this.syncPickups([], 0);
         this.battle = null;
+        this.terrain = null;
+        this.particles.setTerrain(null);
+        this.effects.setTerrain(null);
     }
 
     removeVM(vm) {
         this.scene.remove(vm.root);
-        if (vm.ring) { this.scene.remove(vm.ring); vm.ring.geometry.dispose(); vm.ring.material.dispose(); }
+        if (vm.ring) { this.scene.remove(vm.ringG); vm.ring.geometry.dispose(); vm.ring.material.dispose(); }
         if (vm.loose) this.scene.remove(vm.loose);
         disposeVehicleMesh(vm);
     }
@@ -139,7 +149,12 @@ export class Scene3D {
         vm.ring = new THREE.Mesh(new THREE.RingGeometry(r - 0.22, r, 48), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: v.isPlayer ? 0.35 : 0.55, depthWrite: false }));
         vm.ring.rotation.x = -Math.PI / 2;
         vm.ring.renderOrder = 3;
-        this.scene.add(vm.root, vm.ring);
+        // кольцо лежит в плоскости днища (наклоняется вместе с машиной на склоне)
+        vm.ringG = new THREE.Group();
+        vm.ringG.rotation.order = "YZX";
+        vm.ringG.add(vm.ring);
+        vm.root.rotation.order = "YZX";
+        this.scene.add(vm.root, vm.ringG);
         this.vmeshes.set(v.id, vm);
         return vm;
     }
@@ -154,13 +169,16 @@ export class Scene3D {
             const seen = v.team === pt || v.visible[pt] || v.dead;
             // в прицеле своя машина не рисуется — камера внутри башни
             vm.root.visible = seen && !(this.hideOwn && v.isPlayer);
-            vm.root.position.set(v.x, 0, v.z);
-            vm.root.rotation.y = -v.a;
-            vm.ring.position.set(v.x, 0.05, v.z);
+            // поза на рельефе: курс, тангаж (нос вверх), крен (правый борт вниз)
+            vm.root.position.set(v.x, v.y || 0, v.z);
+            vm.root.rotation.set(v.roll || 0, -v.a, v.pitch || 0);
+            vm.ringG.position.set(v.x, (v.y || 0) + 0.06, v.z);
+            vm.ringG.rotation.set(v.roll || 0, -v.a, v.pitch || 0);
             vm.ring.visible = seen && !v.dead && !(this.hideOwn && v.isPlayer);
             if (vm.loose !== vm.turret) vm.turret.rotation.y = -v.turretRel();
             vm.gun.rotation.y = -v.gunRel();
             if (vm.setGunPitch) vm.setGunPitch(v.gp || 0);
+            if (vm.setStations && v.stn) vm.setStations(v.stn);
             // откат ствола
             if (v.recoil > 0) { vm.recoil = 1; v.recoil = 0; }
             vm.recoil = Math.max(0, vm.recoil - dt * 3.2);
@@ -194,21 +212,56 @@ export class Scene3D {
             }
             // огонь и дым
             if (v.fire && seen) {
-                const wp = hullToWorld(v, v.fire.pos);
-                for (let k = 0; k < 2; k++) this.particles.fire([wp[0], v.def.dims.H, wp[2]], 1.1);
-            } else if (seen && modState(v.mods.engine) >= 2 && Math.random() < dt * 6) {
-                const ep = hullToWorld(v, v.mods.engine.def.c);
-                this.particles.smoke([ep[0], v.def.dims.H, ep[2]], 0.3, 0.7);
+                const wp = hullToWorld(v, [v.fire.pos[0], v.def.dims.H, v.fire.pos[2]]);
+                for (let k = 0; k < 2; k++) this.particles.fire(wp, 1.1);
+            } else if (seen && v.mods.engine && modState(v.mods.engine) >= 2 && Math.random() < dt * 6) {
+                const c = v.mods.engine.def.c;
+                this.particles.smoke(hullToWorld(v, [c[0], v.def.dims.H, c[2]]), 0.3, 0.7);
             }
         }
         if (this.weather && this.weather.precip && dt > 0) this.precip(dt);
         for (const s of b.strikes) {
-            if (s.n < s.total && Math.random() < dt * 9) this.particles.markerSmoke([s.x, 0, s.z], s.team === pt ? [0.35, 0.6, 0.95] : [0.95, 0.3, 0.2]);
+            if (s.n < s.total && Math.random() < dt * 9) this.particles.markerSmoke([s.x, this.gy(s.x, s.z), s.z], s.team === pt ? [0.35, 0.6, 0.95] : [0.95, 0.3, 0.2]);
         }
         this.effects.syncTracers(b.shots, this.particles);
+        this.syncPickups(b.modeCtl.pickups, dt);
         if (this.worldMesh) this.worldMesh.updatePoints(b.modeCtl.points || (b.modeCtl.point ? [{ ...b.modeCtl.point, owner: -1, cap: b.modeCtl.cap }] : null), pt, b.time);
         this.particles.update(dt);
         this.effects.update(dt);
+    }
+
+    /** Ящики с трофейными снарядами: ящик на земле, вращающееся кольцо и жёлтый дым-маяк */
+    syncPickups(list, dt) {
+        if (!this.pickupMeshes) this.pickupMeshes = new Map();
+        const alive = new Set();
+        for (const pk of list || []) {
+            alive.add(pk.id);
+            let m = this.pickupMeshes.get(pk.id);
+            if (!m) {
+                m = new THREE.Group();
+                const crate = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 0.9), new THREE.MeshStandardMaterial({ color: 0x5b5a3a, roughness: 0.8 }));
+                crate.position.y = 0.4;
+                crate.castShadow = true;
+                const band = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.16, 0.92), new THREE.MeshBasicMaterial({ color: 0xffd25a }));
+                band.position.y = 0.55;
+                const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.6, 40), new THREE.MeshBasicMaterial({ color: 0xffd25a, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide }));
+                ring.rotation.x = -Math.PI / 2;
+                ring.position.y = 0.08;
+                m.add(crate, band, ring);
+                m.userData.ring = ring;
+                this.scene.add(m);
+                this.pickupMeshes.set(pk.id, m);
+            }
+            m.position.set(pk.x, this.gy(pk.x, pk.z), pk.z);
+            m.userData.ring.rotation.z += dt * 1.5;
+            if (Math.random() < dt * 4) this.particles.markerSmoke([pk.x, this.gy(pk.x, pk.z), pk.z], [1, 0.82, 0.3]);
+        }
+        for (const [id, m] of this.pickupMeshes) {
+            if (alive.has(id)) continue;
+            this.scene.remove(m);
+            m.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+            this.pickupMeshes.delete(id);
+        }
     }
 
     /** Осадки и взвесь вокруг точки обзора */
@@ -219,22 +272,22 @@ export class Scene3D {
         if (kind === "snow") {
             const n = Math.round(260 * q * dt + Math.random());
             for (let i = 0; i < n; i++) {
-                this.particles.norm.emit({ x: c.x + rnd(-hw, hw), y: rnd(14, 34), z: c.z + rnd(-hd, hd), vx: rnd(1, 2.5), vy: rnd(-7, -5), vz: rnd(-0.5, 0.5), life: 4.5, s0: rnd(0.3, 0.55), c0: [1, 1, 1, 0.85], c1: [1, 1, 1, 0.7], drag: 0 });
+                this.particles.norm.emit({ x: c.x + rnd(-hw, hw), y: c.gy + rnd(14, 34), z: c.z + rnd(-hd, hd), vx: rnd(1, 2.5), vy: rnd(-7, -5), vz: rnd(-0.5, 0.5), life: 4.5, s0: rnd(0.3, 0.55), c0: [1, 1, 1, 0.85], c1: [1, 1, 1, 0.7], drag: 0 });
             }
         } else if (kind === "dust") {
             const n = Math.round(26 * q * dt + Math.random());
             for (let i = 0; i < n; i++) {
-                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.4, hw * 0.6), y: rnd(2, 9), z: c.z + rnd(-hd, hd), vx: rnd(10, 16), vy: rnd(-0.3, 0.6), vz: rnd(-1.5, 1.5), life: rnd(3, 5), s0: rnd(6, 10), s1: rnd(14, 22), c0: [0.93, 0.84, 0.66, 0.2], c1: [0.95, 0.88, 0.72, 0], drag: 0, vr: rnd(-0.3, 0.3) });
+                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.4, hw * 0.6), y: c.gy + rnd(2, 9), z: c.z + rnd(-hd, hd), vx: rnd(10, 16), vy: rnd(-0.3, 0.6), vz: rnd(-1.5, 1.5), life: rnd(3, 5), s0: rnd(6, 10), s1: rnd(14, 22), c0: [0.93, 0.84, 0.66, 0.2], c1: [0.95, 0.88, 0.72, 0], drag: 0, vr: rnd(-0.3, 0.3) });
             }
             // песчинки
             const m = Math.round(80 * q * dt + Math.random());
             for (let i = 0; i < m; i++) {
-                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.2, hw), y: rnd(0.5, 5), z: c.z + rnd(-hd, hd), vx: rnd(18, 26), vy: rnd(-0.5, 0.5), vz: rnd(-1, 1), life: rnd(1.5, 2.5), s0: rnd(0.2, 0.4), c0: [0.6, 0.5, 0.34, 0.8], c1: [0.6, 0.5, 0.34, 0], drag: 0 });
+                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.2, hw), y: c.gy + rnd(0.5, 5), z: c.z + rnd(-hd, hd), vx: rnd(18, 26), vy: rnd(-0.5, 0.5), vz: rnd(-1, 1), life: rnd(1.5, 2.5), s0: rnd(0.2, 0.4), c0: [0.6, 0.5, 0.34, 0.8], c1: [0.6, 0.5, 0.34, 0], drag: 0 });
             }
         } else if (kind === "mist") {
             const n = Math.round(10 * q * dt + Math.random());
             for (let i = 0; i < n; i++) {
-                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.2, hw), y: rnd(2, 8), z: c.z + rnd(-hd, hd), vx: rnd(1.5, 3), vy: 0, vz: rnd(-0.5, 0.5), life: rnd(7, 10), s0: rnd(16, 22), s1: rnd(26, 34), c0: [0.9, 0.92, 0.93, 0.13], c1: [0.9, 0.92, 0.93, 0], drag: 0, vr: rnd(-0.1, 0.1) });
+                this.particles.norm.emit({ x: c.x + rnd(-hw * 1.2, hw), y: c.gy + rnd(2, 8), z: c.z + rnd(-hd, hd), vx: rnd(1.5, 3), vy: 0, vz: rnd(-0.5, 0.5), life: rnd(7, 10), s0: rnd(16, 22), s1: rnd(26, 34), c0: [0.9, 0.92, 0.93, 0.13], c1: [0.9, 0.92, 0.93, 0], drag: 0, vr: rnd(-0.1, 0.1) });
             }
         }
     }
@@ -253,10 +306,10 @@ export class Scene3D {
     wreckFx(v, vm, dt) {
         const age = this.battle.time - vm.deathT;
         if (age < 70 && Math.random() < dt * (age < 12 ? 9 : 3)) {
-            const p = [v.x + rnd(-0.6, 0.6), v.def.dims.H, v.z + rnd(-0.6, 0.6)];
+            const p = [v.x + rnd(-0.6, 0.6), (v.y || 0) + v.def.dims.H, v.z + rnd(-0.6, 0.6)];
             this.particles.smoke(p, 0.12, 1.2);
         }
-        if (age < (v.deathCause === "crew" ? 4 : 16) && Math.random() < dt * 18) this.particles.fire([v.x + rnd(-1, 1), v.def.dims.H * 0.8, v.z + rnd(-1, 1)], 1.3);
+        if (age < (v.deathCause === "crew" ? 4 : 16) && Math.random() < dt * 18) this.particles.fire([v.x + rnd(-1, 1), (v.y || 0) + v.def.dims.H * 0.8, v.z + rnd(-1, 1)], 1.3);
     }
 
     /* ─────────── События боя → эффекты ─────────── */
@@ -274,6 +327,12 @@ export class Scene3D {
             this.particles.groundBlast(e.pos, e.def.cal, this.dust);
             if (e.def.cal >= 40) this.effects.flash(e.pos, 0xffb060, 6 + e.def.cal / 10, 0.12);
             if (v.isPlayer) this.cam.shake = Math.max(this.cam.shake, 0.15 + e.def.cal / 300);
+            // залп главного калибра «Ратте» трясёт камеру по всей округе
+            if (e.def.cal >= 200) {
+                const d = Math.hypot(e.pos[0] - this.cam.x, e.pos[2] - this.cam.z);
+                if (d < 260) this.cam.shake = Math.max(this.cam.shake, 1.1 * (1 - d / 260));
+                this.particles.groundBlast(e.pos, 160, this.dust);
+            }
         });
         Events.on("hit", (e) => {
             if (!this.battle) return;
@@ -288,25 +347,26 @@ export class Scene3D {
             const p = [e.x, e.y, e.z];
             if (e.inside) { this.particles.sparks(p, 10, [1, 0.5, 0.2]); return; }
             const w = this.battle.world;
-            if (e.y < 1 && w.river && !w.river.frozen && w.inWater(e.x, e.z)) {
+            const low = e.y - this.gy(e.x, e.z) < 1.2;
+            if (low && w.river && !w.river.frozen && w.inWater(e.x, e.z)) {
                 this.particles.splash(p, 0.8 + e.size * 0.6);
                 this.effects.flash(p, 0xff9a40, 6 * e.size, 0.15, 18);
                 return;
             }
-            if (e.y < 1.2) this.effects.crater(e.x, e.z, 0.8 + e.size * 1.1);
+            if (low) this.effects.crater(e.x, e.z, 0.8 + e.size * 1.1);
             const [sx, sy, front] = this.project(e.x, e.y, e.z);
             const m = 160;
             if (!front || sx < -m || sy < -m || sx > this.w + m || sy > this.h + m) return;
             const dist = Math.hypot(e.x - this.camera.position.x, e.y - this.camera.position.y, e.z - this.camera.position.z);
             const lod = clamp(1.15 - dist / 260, 0.25, 1);
-            this.particles.explosion(p, Math.min(e.size, 1.8), e.ground !== false && e.y < 1, this.dust, lod);
+            this.particles.explosion(p, Math.min(e.size, 1.8), e.ground !== false && low, this.dust, lod);
             this.effects.flash(p, 0xff9a40, 10 * e.size, 0.25, 22 + e.size * 10);
             const d = near(e.x, e.z);
             if (d < 60) this.cam.shake = Math.max(this.cam.shake, (1 - d / 60) * e.size * 0.8);
         });
         Events.on("impact", (e) => {
             if (!this.battle || e.shell.type === "HE") return;
-            const p = [e.x, Math.max(0.2, e.y), e.z];
+            const p = [e.x, Math.max(this.gy(e.x, e.z) + 0.2, e.y), e.z];
             const w = this.battle.world;
             if (e.kind === "ground" && w.river && !w.river.frozen && w.inWater(e.x, e.z)) this.particles.splash(p, 0.5);
             else if (e.kind === "ground") this.particles.dust(p, this.dust, 5, 3);
@@ -317,7 +377,7 @@ export class Scene3D {
         Events.on("destroyed", (e) => {
             if (!this.battle) return;
             const v = e.v;
-            const p = [v.x, 1.4, v.z];
+            const p = hullToWorld(v, [0, 1.4, 0]);
             if (e.cause === "ammo") {
                 this.particles.detonation(p);
                 this.effects.flash(p, 0xff8030, 40, 0.6, 50);
@@ -334,10 +394,16 @@ export class Scene3D {
             if (!this.worldMesh) return;
             this.worldMesh.onChange(e);
             const o = e.o;
-            if (e.type === "fence") this.particles.debris([o.x, 0.8, o.z], [0.42, 0.32, 0.2], 7);
-            else if (e.type === "hay") { this.particles.debris([o.x, 1, o.z], [0.8, 0.68, 0.36], 14); this.particles.dust([o.x, 0.8, o.z], [0.8, 0.7, 0.45], 6, 3); }
-            else if (e.type === "tree") this.particles.dust([o.x, 1.5, o.z], this.dust, 5, 2);
-            else if (e.type === "hedge") { this.particles.debris([o.x, 1.2, o.z], [0.25, 0.38, 0.16], 14); this.particles.dust([o.x, 1, o.z], [0.45, 0.42, 0.3], 6, 3); }
+            const y = o.y || 0;
+            if (e.type === "fence") this.particles.debris([o.x, y + 0.8, o.z], [0.42, 0.32, 0.2], 7);
+            else if (e.type === "hay") { this.particles.debris([o.x, y + 1, o.z], [0.8, 0.68, 0.36], 14); this.particles.dust([o.x, y + 0.8, o.z], [0.8, 0.7, 0.45], 6, 3); }
+            else if (e.type === "tree") this.particles.dust([o.x, y + 1.5, o.z], this.dust, 5, 2);
+            else if (e.type === "hedge") { this.particles.debris([o.x, y + 1.2, o.z], [0.25, 0.38, 0.16], 14); this.particles.dust([o.x, y + 1, o.z], [0.45, 0.42, 0.3], 6, 3); }
+            else if (e.type === "building") {
+                // раздавленный дом: облако пыли и обломки
+                for (let k = 0; k < 4; k++) this.particles.dust([o.x + rnd(-o.hl, o.hl), y + rnd(1, o.h), o.z + rnd(-o.hw, o.hw)], [0.72, 0.68, 0.6], 12, 6);
+                this.particles.debris([o.x, y + o.h * 0.6, o.z], [0.55, 0.5, 0.44], 26);
+            }
         });
         Events.on("vehicleRemoved", (e) => {
             const vm = this.vmeshes.get(e.v.id);
@@ -345,7 +411,7 @@ export class Scene3D {
         });
         Events.on("fireOut", (e) => {
             if (!this.battle || !e.ext || e.v.dead) return;
-            const p = [e.v.x, e.v.def.dims.H, e.v.z];
+            const p = hullToWorld(e.v, [0, e.v.def.dims.H, 0]);
             this.particles.dust(p, [0.9, 0.9, 0.92], 10, 4);
         });
     }
@@ -375,6 +441,8 @@ export class Scene3D {
         }
         this.cam.x = damp(this.cam.x, tx, 5, dt);
         this.cam.z = damp(this.cam.z, tz, 5, dt);
+        // высота земли под точкой обзора (камера сверху держится над рельефом)
+        this.cam.gy = damp(this.cam.gy, this.gy(this.cam.x, this.cam.z), 4, dt);
         this.cam.h = damp(this.cam.h, zoomH * (binoc ? C.BINOC_ZOOM : 1), 5, dt);
         this.cam.shake = Math.max(0, this.cam.shake - dt * 2.2);
         const sh = this.cam.shake * this.cam.shake * 1.4;
@@ -394,7 +462,7 @@ export class Scene3D {
     placeCamera(view) {
         const C = Config.CAMERA;
         const tilt = clamp(Settings.get("tilt"), 0, 40) * Math.PI / 180;
-        const x = this.cam.x + this.cam.sx, z = this.cam.z + this.cam.sz, h = this.cam.h;
+        const x = this.cam.x + this.cam.sx, z = this.cam.z + this.cam.sz, h = this.cam.h, gy = this.cam.gy;
         const cam = this.camera;
         const t = view ? clamp(view.t, 0, 1) : 0;
         // от вида: дальность для дымки, центр и размер области теней
@@ -418,10 +486,11 @@ export class Scene3D {
             const pitch = pitchTop + (view.pitch - pitchTop) * e;
             const R = (h / Math.cos(tilt)) * (1 - e) + view.dist * e;
             const P = view.pivot;
-            const tx = x + (P[0] - x) * e, ty = P[1] * e, tz = z + (P[2] - z) * e;
+            const tx = x + (P[0] - x) * e, ty = gy + (P[1] - gy) * e, tz = z + (P[2] - z) * e;
             const D = lookDir(yaw, pitch);
             const px = tx - D[0] * R, pz = tz - D[2] * R;
-            const py = Math.max(1.1, ty - D[1] * R + 0.7 * e);
+            // камера не уходит под склон за кормой
+            const py = Math.max(this.gy(px, pz) + 1.1, ty - D[1] * R + 0.7 * e);
             cam.position.set(px, py, pz);
             cam.lookAt(px + D[0], py + D[1], pz + D[2]);
             this.setLens(C.FOV + (C.TP.FOV - C.FOV) * e, 2 + (0.3 - 2) * e);
@@ -429,8 +498,8 @@ export class Scene3D {
             sx = x + (P[0] + D[0] * 30 - x) * e; sz = z + (P[2] + D[2] * 30 - z) * e;
             ext = ext * (1 - e) + 70 * e;
         } else {
-            cam.position.set(x, h, z + h * Math.tan(tilt));
-            cam.lookAt(x, 0, z);
+            cam.position.set(x, gy + h, z + h * Math.tan(tilt));
+            cam.lookAt(x, gy, z);
             this.setLens(C.FOV, 2);
         }
         cam.updateMatrixWorld();
@@ -446,8 +515,8 @@ export class Scene3D {
             sc.near = 1; sc.far = 500;
             sc.updateProjectionMatrix();
         }
-        this.sun.position.set(sx - 90, 170, sz + 60);
-        this.sun.target.position.set(sx, 0, sz);
+        this.sun.position.set(sx - 90, gy + 170, sz + 60);
+        this.sun.target.position.set(sx, gy, sz);
         this.sun.target.updateMatrixWorld();
     }
 
@@ -462,6 +531,13 @@ export class Scene3D {
     groundAt(mx, my, y = 0) {
         this.ndc.set((mx / this.w) * 2 - 1, -(my / this.h) * 2 + 1);
         this.raycaster.setFromCamera(this.ndc, this.camera);
+        if (this.terrain) {
+            // точка на рельефе под курсором
+            const r = this.raycaster.ray;
+            const o = [r.origin.x, r.origin.y, r.origin.z], d = [r.direction.x, r.direction.y, r.direction.z];
+            const t = this.terrain.ray(o, d, 2500, 3);
+            if (t >= 0) return [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t];
+        }
         this.plane.constant = -y;
         const hit = this.raycaster.ray.intersectPlane(this.plane, this.tmpV);
         return hit ? [hit.x, hit.y, hit.z] : null;

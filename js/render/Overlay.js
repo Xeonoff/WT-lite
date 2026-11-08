@@ -48,6 +48,17 @@ export class Overlay {
         this.edgeSlots = [];
         this.drawPoints(b, sc, pt);
         this.drawStrikes(b, sc, pt);
+        // трофеи
+        for (const pk of b.modeCtl.pickups || []) {
+            const [x, y, front] = sc.project(pk.x, sc.gy(pk.x, pk.z) + 2.4, pk.z);
+            if (!front || x < 0 || y < 0 || x > this.w || y > this.h) continue;
+            this.g.font = "800 11px 'Exo 2', sans-serif";
+            this.g.textAlign = "center";
+            this.g.fillStyle = "rgba(0,0,0,.55)";
+            this.g.fillText("ТРОФЕЙ", x + 1, y + 1);
+            this.g.fillStyle = "#ffd25a";
+            this.g.fillText("ТРОФЕЙ", x, y);
+        }
         // метки техники
         for (const v of b.vehicles) {
             if (v.dead || v.isPlayer) continue;
@@ -55,7 +66,7 @@ export class Overlay {
             if (game.spec && game.spec.v === v && game.camTs > 0.5) continue;
             const ally = v.team === pt;
             if (!ally && !v.visible[pt]) continue;
-            const top = v.def.dims.H + v.def.turret.h + 2.2;
+            const top = (v.y || 0) + v.def.dims.H + v.def.turret.h + 2.2;
             const [x, y, front] = sc.project(v.x, top, v.z);
             const on = front && x > -20 && y > -20 && x < this.w + 20 && y < this.h + 20;
             if (on) this.nameplate(v, x, y, ally, p);
@@ -139,7 +150,7 @@ export class Overlay {
         const g = this.g;
         const pts = b.modeCtl.points || (b.modeCtl.point ? [{ ...b.modeCtl.point, owner: -1, prog: -(b.modeCtl.cap || 0) }] : []);
         for (const q of pts) {
-            const [x, y, front] = sc.project(q.x, 0, q.z);
+            const [x, y, front] = sc.project(q.x, sc.gy(q.x, q.z), q.z);
             const col = q.owner === -1 ? COL.neutral : q.owner === pt ? COL.ally : COL.enemy;
             const on = front && x > 30 && y > 30 && x < this.w - 30 && y < this.h - 30;
             let px = x, py = y;
@@ -182,7 +193,8 @@ export class Overlay {
             g.beginPath();
             for (let i = 0; i <= 32; i++) {
                 const a = (i / 32) * Math.PI * 2;
-                const [x, y] = sc.project(s.x + Math.cos(a) * s.r, 0, s.z + Math.sin(a) * s.r);
+                const qx = s.x + Math.cos(a) * s.r, qz = s.z + Math.sin(a) * s.r;
+                const [x, y] = sc.project(qx, sc.gy(qx, qz) + 0.2, qz);
                 i ? g.lineTo(x, y) : g.moveTo(x, y);
             }
             g.fillStyle = `rgba(${col},.08)`;
@@ -192,7 +204,7 @@ export class Overlay {
             g.lineWidth = 2;
             g.stroke();
             g.setLineDash([]);
-            const [cx, cy, front] = sc.project(s.x, 0, s.z);
+            const [cx, cy, front] = sc.project(s.x, sc.gy(s.x, s.z), s.z);
             if (!front) continue;
             const left = Math.max(0, Config.ARTY.DELAY - s.t);
             g.font = "800 12px 'Exo 2', sans-serif";
@@ -218,9 +230,9 @@ export class Overlay {
                 tx = v.x + Math.cos(v.a) * v.v * tof;
                 tz = v.z + Math.sin(v.a) * v.v * tof;
             }
-            const y = v.def.dims.H * 0.6;
+            const y = (v.y || 0) + v.def.dims.H * 0.6;
             const [ax, ay] = sc.project(v.x, y, v.z);
-            const [lx, ly, front] = sc.project(tx, y, tz);
+            const [lx, ly, front] = sc.project(tx, sc.gy(tx, tz) + v.def.dims.H * 0.6, tz);
             if (!front || Math.hypot(lx - ax, ly - ay) < 6) continue;
             g.strokeStyle = "rgba(255,120,100,.55)";
             g.setLineDash([3, 3]);
@@ -252,7 +264,7 @@ export class Overlay {
             g.setLineDash([]);
         }
         // ремонт / пересадка над машиной
-        const [x, y] = sc.project(p.x, p.def.dims.H + T.h + 2.5, p.z);
+        const [x, y] = sc.project(p.x, (p.y || 0) + p.def.dims.H + T.h + 2.5, p.z);
         let bar = null;
         if (p.repair) bar = { t: p.repair.t / p.repair.dur, col: COL.warn, label: "РЕМОНТ " + Math.ceil(p.repair.dur - p.repair.t) + " с" };
         else if (p.swap) bar = { t: p.swap.t / p.swap.dur, col: COL.ally, label: "ПЕРЕСАДКА" };
@@ -269,7 +281,7 @@ export class Overlay {
 
     drawIncoming(p, sc, dt) {
         const g = this.g;
-        const [px, py] = sc.project(p.x, 1, p.z);
+        const [px, py] = sc.project(p.x, (p.y || 0) + 1, p.z);
         for (const h of this.incoming) {
             h.t += dt;
             const a = Math.atan2(h.z - p.z, h.x - p.x);
