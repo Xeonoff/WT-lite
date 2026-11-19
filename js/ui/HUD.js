@@ -444,7 +444,7 @@ export class HUD {
         if (!on || !this.battle) return;
         const b = this.battle;
         const col = (team) => b.vehicles
-            .filter((v) => v.team === team && !v.static)
+            .filter((v) => v.team === team && !v.static && !v.rangeTarget)
             .sort((x, y) => (x.dead - y.dead) || y.stats.kills - x.stats.kills)
             .map((v) => `<tr class="${v.dead ? "dead" : ""} ${v.isPlayer ? "me" : ""}"><td>${v.callsign}</td><td>${v.def.name}</td><td>${v.stats.kills}</td><td>${v.stats.assists}</td><td>${v.stats.caps}</td></tr>`)
             .join("");

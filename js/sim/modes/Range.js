@@ -36,7 +36,7 @@ export class RangeMode {
     }
 
     spawnSlot(slot) {
-        slot.v = this.b.spawnVehicle(slot.id, 1, slot.x, slot.z, slot.a, { static: true, callsign: "Мишень" });
+        slot.v = this.b.spawnVehicle(slot.id, 1, slot.x, slot.z, slot.a, { rangeTarget: true, callsign: "Мишень" });
     }
 
     playerSpawnPoint() {

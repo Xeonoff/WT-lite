@@ -151,7 +151,7 @@ function finalize(ctx) {
     const { v, res, battle, shooter } = ctx;
     if (v.dead) return res;
     const ammoIds = Object.keys(ctx.ammoHits);
-    if (ammoIds.length && !ctx.detonate) {
+    if (ammoIds.length && !ctx.detonate && res.kind !== "collision") {
         // один бросок по самому опасному стеллажу
         const fills = v.rackFills();
         let pMax = 0;
@@ -197,6 +197,39 @@ function finalize(ctx) {
         res.killed = true; res.cause = "crew";
     }
     return res;
+}
+
+/** Аркадная модель удара: величина J/m задаёт бюджет урона, место контакта — его распределение. */
+export function collisionDamage(battle, v, other, x, z, impulse) {
+    const severity = impulse / v.def.mob.mass - 2.5;
+    if (severity <= 0 || v.dead) return;
+    const dx = x - v.x, dz = z - v.z, c = Math.cos(v.a), s = Math.sin(v.a);
+    const point = [dx * c + dz * s, v.def.dims.th * 0.65, dz * c - dx * s];
+    const radius = Math.min(3.5, v.def.dims.W * 0.8);
+    const targets = [];
+    for (const m of Object.values(v.mods)) {
+        if (m.hp <= 0) continue;
+        const p = hullToFrame(v, m.def.frame, point);
+        const dist = Math.hypot(...p.map((n, i) => n - clamp(n, m.def.min[i], m.def.max[i])));
+        if (dist < radius) targets.push({ kind: "mod", m, dist });
+    }
+    for (const [id, seat] of Object.entries(v.seats)) {
+        if (!seat.occupant?.alive) continue;
+        const p = hullToFrame(v, seat.def.frame, point);
+        const dist = Math.max(0, Math.hypot(...p.map((n, i) => n - seat.def.c[i])) - seat.def.r);
+        if (dist < radius) targets.push({ kind: "crew", id, member: seat.occupant, dist });
+    }
+    const ctx = makeCtx(battle, v, other, null);
+    ctx.res.kind = "collision";
+    const budget = Math.min(320, severity ** 1.35 * 11);
+    let weight = 0;
+    for (const t of targets) { t.weight = (1 - t.dist / radius) ** 2; weight += t.weight; }
+    for (const t of targets) hurtTarget(ctx, t, budget * t.weight / Math.max(1, weight), "collision");
+    if (!ctx.res.dmg.length) return;
+    if (other && other.team !== v.team) v.damagers.set(other.id, battle.time);
+    Events.emit("collisionDamage", { v, severe: severity > 5 });
+    finalize(ctx);
+    battle.creditDamage(other, v, ctx.res);
 }
 
 function snapshot(v) {

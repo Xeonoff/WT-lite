@@ -1,8 +1,9 @@
 import * as THREE from "three";
-import { camoTexture, trackTexture, runningGearTexture } from "./Textures.js";
+import { camoTexture, trackTexture, runningGearTexture, roadWheelTexture } from "./Textures.js";
 import { turretSlopeRing, hullHalfWidth, skirtSpan } from "../data/VehicleBuild.js";
 import { createKV1, layoutTrack as layoutKV1Track, mergeGeometries as mergeModel } from "./models/KV1Model.js";
 import { createRatte, layoutTrack as layoutRatteTrack } from "./models/RatteModel.js";
+import { wheelTravel, beltTravel, roadWheelRadius, BELT_SUBDIVISIONS } from "../sim/Suspension.js";
 
 /** Детальные модели (иначе машина строится процедурно по описанию) */
 const DETAILED = { kv1: { create: createKV1, layoutTrack: layoutKV1Track }, ratte: { create: createRatte, layoutTrack: layoutRatteTrack } };
@@ -203,8 +204,42 @@ function trackGeometry(def) {
     shape.lineTo(cxR, th);
     shape.absarc(cxR, cy, rS, Math.PI / 2, Math.PI - a0, false);
     shape.lineTo(-Lb / 2, 0);
-    const g = new THREE.ExtrudeGeometry(shape, { depth: tw, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 1, curveSegments: 10 });
-    g.translate(0, 0, -tw / 2);
+    // Поперечные сечения нужны и на прямой опорной ветви, чтобы она огибала неровности.
+    const contour = shape.getPoints(10);
+    const extent = Lb / 2 - roadWheelRadius(def) * 0.55;
+    const gaps = (def.susp.wheels - 1) * (def.susp.type === "interleaved" ? 2 : 1) * BELT_SUBDIVISIONS;
+    const xs = Array.from(new Set([...contour.map(p => p.x),
+        ...Array.from({ length: gaps + 1 }, (_, i) => (2 * i / gaps - 1) * extent)])).sort((a, b) => a - b);
+    const sections = xs.map(x => {
+        const ys = [];
+        for (let i = 1; i < contour.length; i++) {
+            const a = contour[i - 1], b = contour[i];
+            if (x < Math.min(a.x, b.x) || x > Math.max(a.x, b.x)) continue;
+            if (a.x === b.x) ys.push(a.y, b.y);
+            else ys.push(a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x));
+        }
+        const lo = Math.min(...ys), hi = Math.max(...ys);
+        return [[x, hi, -tw / 2], [x, lo, -tw / 2], [x, lo, tw / 2], [x, hi, tw / 2]];
+    });
+    const g = new THREE.BufferGeometry(), positions = [], uvs = [], indices = [];
+    for (let face = 0; face < 4; face++) {
+        const start = indices.length, base = positions.length / 3, side = face % 2 === 0;
+        for (const section of sections) {
+            for (const j of [face, (face + 1) % 4]) {
+                const p = section[j];
+                positions.push(...p);
+                uvs.push(p[0], side ? p[1] : p[2]);
+            }
+        }
+        for (let i = 0; i < sections.length - 1; i++) {
+            const a = base + i * 2;
+            indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+        }
+        g.addGroup(start, indices.length - start, side ? 0 : 1);
+    }
+    g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
     g.computeVertexNormals();
     g.userData.shared = true;
     g.userData.dims = { Lt, Lb, rS };
@@ -240,13 +275,41 @@ export function buildVehicleMesh(def, biomeKey, opts = {}) {
     gear.repeat.set(1 / Lt, 1 / th);
     gear.offset.set(0.5, 0);
     const tracks = [];
+    const radius = roadWheelRadius(def);
+    const extent = Lb / 2 - radius * 0.55;
+    const count = def.susp.wheels;
+    const staggered = def.susp.type === "interleaved";
+    const wheelCount = staggered ? 2 * count - 1 : count;
+    const wheelGeo = new THREE.CylinderGeometry(radius, radius, 0.075, 20).rotateX(Math.PI / 2);
+    const wheelMat = new THREE.MeshStandardMaterial({ map: roadWheelTexture(def.susp.type), roughness: 0.85 });
+    const roadWheels = add(root, new THREE.InstancedMesh(wheelGeo, wheelMat, 2 * wheelCount));
+    roadWheels.name = "roadWheels";
+    roadWheels.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const pose = new THREE.Matrix4();
+    function positionWheels(ph, state) {
+        for (let side = 0; side < 2; side++) {
+            pose.makeRotationZ(-ph[side] / radius);
+            for (let i = 0; i < wheelCount; i++) {
+                const x = -extent + 2 * extent * i / (wheelCount - 1);
+                const lift = state ? wheelTravel(state, side, x) : 0;
+                const stagger = staggered && i % 2 === 0 ? 0.05 : 0;
+                pose.setPosition(x, radius + 0.06 + lift, (side ? 1 : -1) * (W / 2 - 0.025 + stagger));
+                roadWheels.setMatrixAt(side * wheelCount + i, pose);
+            }
+        }
+        roadWheels.instanceMatrix.needsUpdate = true;
+    }
+    positionWheels([0, 0], null);
+    let leftPhase = 0, rightPhase = 0, travelVersion;
     for (let s = 0; s < 2; s++) {
         const belt = trackTexture().clone();
         belt.needsUpdate = true;
         belt.repeat.set(1 / 0.7, 1 / tw);
         const beltMat = new THREE.MeshStandardMaterial({ map: belt, roughness: 0.95, metalness: 0.25 });
         const sideMat = new THREE.MeshStandardMaterial({ map: gear, roughness: 0.9, metalness: 0.2 });
-        const m = add(root, new THREE.Mesh(tg, [sideMat, beltMat]));
+        const geometry = tg.clone();
+        geometry.userData = { ...tg.userData, shared: false };
+        const m = add(root, new THREE.Mesh(geometry, [sideMat, beltMat]));
         m.position.set(0, 0, (s === 0 ? -1 : 1) * (W / 2 - tw / 2));
         tracks.push({ mesh: m, tex: belt, mats: [beltMat, sideMat] });
     }
@@ -378,7 +441,31 @@ export function buildVehicleMesh(def, biomeKey, opts = {}) {
 
     // орудие качается вокруг оси цапф (z); поворот рубочного орудия — вокруг y
     const setGunPitch = (gp) => { gun.rotation.z = gp; };
-    return { root, turret, gun, barrel, tracks, meshes, camo, def, setGunPitch };
+    function setSuspension(state) {
+        const rest = tg.attributes.position;
+        for (let side = 0; side < tracks.length; side++) {
+            const track = tracks[side];
+            if (track.travelVersion === state.version) continue;
+            track.travelVersion = state.version;
+            const pos = track.mesh.geometry.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                const y = rest.getY(i);
+                const weight = 1 - Math.min(1, Math.max(0, (y / th - 0.45) / 0.55));
+                pos.setY(i, y + beltTravel(state, side, rest.getX(i)) * weight);
+            }
+            pos.needsUpdate = true;
+        }
+    }
+    return { root, turret, gun, barrel, tracks, meshes, camo, def, setGunPitch, setSuspension,
+        setTrackPhase(ph, state) {
+            if (leftPhase === ph[0] && rightPhase === ph[1] && travelVersion === state?.version) return;
+            [leftPhase, rightPhase] = ph;
+            travelVersion = state?.version;
+            for (let s = 0; s < 2; s++) tracks[s].tex.offset.x = -ph[s] / 0.7;
+            positionWheels(ph, state);
+        },
+        disposeExtra() { wheelMat.dispose(); },
+    };
 }
 
 /** Освободить GPU-ресурсы модели (кроме общих геометрий и материалов) */
@@ -466,6 +553,10 @@ function wrapDetailed(def, model, camo, kv) {
     model.traverse((o) => { if (o.name.startsWith("flak:")) flaks[o.name.slice(5)] = { yaw: o, pitch: o.getObjectByName("flakgun") }; });
     const wheels = [];
     model.traverse((o) => { if (o.name.startsWith("wheel:")) wheels.push(o); });
+    const wheelBanks = [];
+    model.traverse(o => { if (o.name === "roadWheels") wheelBanks.push(o); });
+    for (const w of wheels) w.userData.restY = w.position.y;
+    const wheelMatrix = new THREE.Matrix4();
     const meshes = [];
     model.traverse((o) => { if (o.isMesh && o.userData.kind !== "module" && !o.userData.moduleId && !o.userData.crewId && o.userData.kind !== "zone" && o.userData.kind !== "rounds") meshes.push(o); });
     for (const m of meshes) { m.castShadow = true; m.receiveShadow = true; }
@@ -481,12 +572,33 @@ function wrapDetailed(def, model, camo, kv) {
             if (turret2 && st.t2) { turret2.rotation.y = -st.t2.yaw; if (gun2) gun2.rotation.x = -st.t2.pitch; }
             for (const id in flaks) if (st[id]) { flaks[id].yaw.rotation.y = -st[id].yaw; if (flaks[id].pitch) flaks[id].pitch.rotation.x = -st[id].pitch; }
         },
-        setTrackPhase(ph) {
+        setTrackPhase(ph, state) {
             if (kv) { kv.setTrackPhase(ph[0], ph[1]); return; }
-            if (ph[0] === phase[0] && ph[1] === phase[1]) return;
+            if (ph[0] === phase[0] && ph[1] === phase[1] && vm.travelVersion === state?.version) return;
+            vm.travelVersion = state?.version;
             phase = [ph[0], ph[1]];
-            for (const tr of tracks) if (tr) layoutTrack(tr, -(tr.userData.side > 0 ? ph[0] : ph[1]));
-            for (const w of wheels) w.rotation.x = (w.userData.side > 0 ? ph[0] : ph[1]) / w.userData.radius;
+            for (const tr of tracks) {
+                const side = tr.userData.side > 0 ? 0 : 1;
+                const lane = tr.userData.lane ?? side;
+                const lift = state && ((x, y) => beltTravel(state, lane, x) *
+                    THREE.MathUtils.clamp((0.66 - y / def.dims.th) / 0.52, 0, 1));
+                layoutTrack(tr, -ph[side], lift);
+            }
+            for (const w of wheels) {
+                const side = w.userData.side > 0 ? 0 : 1;
+                w.rotation.x = ph[side] / w.userData.radius;
+                if (state && Number(w.name.split(":")[2]) < state.count)
+                    w.position.y = w.userData.restY + wheelTravel(state, side, w.position.z);
+            }
+            for (const bank of wheelBanks) {
+                const { lane, x, y, centers, radius } = bank.userData;
+                wheelMatrix.makeRotationX(ph[x > 0 ? 0 : 1] / radius);
+                centers.forEach((z, i) => {
+                    wheelMatrix.setPosition(x, y + (state?.travelY[lane][i] || 0), z);
+                    bank.setMatrixAt(i, wheelMatrix);
+                });
+                bank.instanceMatrix.needsUpdate = true;
+            }
         },
     };
     if (kv) {

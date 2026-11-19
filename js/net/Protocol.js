@@ -4,7 +4,7 @@
  */
 import { SHELLS } from "../data/Shells.js";
 
-export const PROTO_VERSION = 3;
+export const PROTO_VERSION = 4;
 export const TICK_HZ = 30;          // шаг симуляции на сервере
 export const SNAP_EVERY = 2;        // снимок состояния — каждый второй шаг (15 Гц)
 export const SNAP_HZ = TICK_HZ / SNAP_EVERY;
@@ -37,6 +37,7 @@ export function packVehicle(v, viewTeam) {
     const a = [v.id, r2(v.x), r2(v.z), r3(v.a), r2(v.v), r3(v.w), r3(v.tr), f, v.input.throttle, v.input.steer, r3(v.gp)];
     // станции вооружения босса: курс и угол возвышения кормовой башни и зениток
     if (v.stn) a.push(STATIONS_NET.map((k) => [r3(v.stn[k].yaw), r3(v.stn[k].pitch)]));
+    if (Math.abs(v.slip) > 0.01) a[12] = r2(v.slip);
     return a;
 }
 
@@ -54,6 +55,7 @@ export function packOwn(v) {
         rl: Object.keys(v.racksLost),
         sh: v.shell, ld: v.loaded, mg: v.mag, r: r2(v.reload), rt: r2(v.reloadTotal),
         fi: v.fire ? { pos: rv(v.fire.pos), t: r1(v.fire.t), dur: r1(v.fire.dur) } : null,
+        impact: v.impactSeq || 0,
         ex: v.ext, mk: v.medkits, rp: v.repair ? [r2(v.repair.t), r2(v.repair.dur)] : null,
         bl: r2(v.bloom), at: v.artyT === undefined ? null : r2(v.artyT), st: r2(v.spawnT),
     };

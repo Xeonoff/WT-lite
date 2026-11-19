@@ -193,12 +193,14 @@ const LINK_PITCH = BELT.total / LINK_COUNT;
 
 const _dummy = new THREE.Object3D();
 /** Раскладка траков гусеницы по ленте со сдвигом offset (м); x — из userData гусеницы */
-export function layoutTrack(tr, offset) {
+export function layoutTrack(tr, offset, lift) {
     const x = tr.userData.x;
     for (let i = 0; i < LINK_COUNT; i++) {
         const p = BELT.at(i * LINK_PITCH + offset);
-        _dummy.position.set(x, p.y, p.z);
-        _dummy.rotation.set(Math.atan2(-p.dy, p.dz), 0, 0);
+        const dy = lift ? lift(p.z, p.y) : 0;
+        const slope = lift ? (lift(p.z + 0.05, p.y) - dy) / 0.05 : 0;
+        _dummy.position.set(x, p.y + dy, p.z);
+        _dummy.rotation.set(Math.atan2(-p.dy - slope * p.dz, p.dz), 0, 0);
         _dummy.updateMatrix();
         tr.setMatrixAt(i, _dummy.matrix);
     }
@@ -446,7 +448,14 @@ export function createRatte(options = {}) {
         const side = s > 0 ? "левый" : "правый";
         TRACK.xs.forEach((tx, k) => {
             const x = s * tx;
-            ROAD_Z.forEach((z, i) => running(hull, dmesh(geoRoad, x, ROAD.y, z), `Опорный каток ${i + 1}, ${trackNames[k]} гусеница (${side} борт)`, mats.steel));
+            const roads = new THREE.InstancedMesh(geoRoad, mats.steel, ROAD_Z.length);
+            running(hull, roads, `Опорные катки, ${trackNames[k]} гусеница (${side} борт)`, mats.steel);
+            roads.name = "roadWheels";
+            roads.userData.lane = (s > 0 ? 0 : TRACK.xs.length) + k;
+            roads.userData.centers = ROAD_Z;
+            roads.userData.x = x; roads.userData.y = ROAD.y;
+            roads.userData.radius = ROAD.r;
+            ROAD_Z.forEach((z, i) => roads.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, ROAD.y, z)));
             running(hull, dmesh(geoIdler, x, IDLER.y, IDLER.z), `Ленивец, ${trackNames[k]} гусеница (${side})`, mats.steel);
             running(hull, dmesh(geoSprocket, x, SPROCKET.y, SPROCKET.z), `Ведущее колесо, ${trackNames[k]} гусеница (${side})`, mats.steel);
             RETURN.z.forEach((z) => running(hull, dmesh(geoReturn, x, RETURN.y, z), `Поддерживающий каток, ${trackNames[k]} гусеница`, mats.steel));
@@ -456,6 +465,7 @@ export function createRatte(options = {}) {
             tr.frustumCulled = false;
             tr.userData = { kind: "running", label: `Гусеница ${trackNames[k]} (${side}): ${LINK_COUNT} траков, 1,2 м`, baseMat: mats.track, side: s, x, offset: 0 };
             hull.add(tr);
+            tr.userData.lane = roads.userData.lane;
             reg.running.push(tr); reg.tracks.push(tr);
             layoutTrack(tr, 0);
         });

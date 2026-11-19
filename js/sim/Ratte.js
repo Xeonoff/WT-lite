@@ -207,7 +207,7 @@ export class RatteSystems {
     onModuleHit(ctx, m, before, src) {
         const v = this.v;
         if (m.hp > 0 || before <= 0) return;
-        if (m.type === "ammo2" && !this.t2Gone && Math.random() < 0.6) {
+        if (m.type === "ammo2" && src !== "collision" && !this.t2Gone && Math.random() < 0.6) {
             // детонация укладки 128 мм: расчёт кормовой башни погибает, башня выведена
             this.t2Gone = true;
             ctx.res.events.push("t2det");

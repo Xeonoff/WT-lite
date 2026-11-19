@@ -25,9 +25,11 @@ export class Vehicle {
         this.isPlayer = !!opts.isPlayer;
         this.name = opts.name || def.name;
         this.static = !!opts.static;
+        this.rangeTarget = !!opts.rangeTarget;
 
         this.x = x; this.z = z; this.a = a;
         this.v = 0;          // скорость вдоль корпуса, м/с
+        this.slip = 0;       // поперечная скорость после удара, м/с
         this.w = 0;          // фактическая угловая скорость корпуса
         this.tr = 0;         // относительный угол башни (или орудия в рубке)
         this.trRate = 0;
@@ -490,6 +492,7 @@ export class Vehicle {
         this.repair = null;
         this.swap = null;
         this.v = 0;
+        this.slip = 0;
         this.w = 0;
     }
 

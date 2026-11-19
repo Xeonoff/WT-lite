@@ -557,7 +557,7 @@ export class AudioSys {
         this.lx = listenerX; this.lz = listenerZ;
         const p = battle.player;
         const near = battle.vehicles
-            .filter((v) => !v.dead && !v.static && (v === p || v.team === battle.playerTeam || v.visible[battle.playerTeam]))
+            .filter((v) => !v.dead && !v.static && !v.rangeTarget && (v === p || v.team === battle.playerTeam || v.visible[battle.playerTeam]))
             .map((v) => ({ v, d: v === p ? -1 : Math.hypot(v.x - listenerX, v.z - listenerZ) }))
             .filter((o) => o.d < 120)
             .sort((a, b) => a.d - b.d)

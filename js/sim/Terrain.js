@@ -51,6 +51,8 @@ export class Terrain {
         this.seed = (world.seed * 7919 + 17) | 0;
         this.h = new Float32Array(this.n * this.n);
         this.build(world);
+        this.course = world.course;
+        for (const ramp of this.course || []) ramp.base = this.groundHeight(ramp.x, ramp.z);
     }
 
     /** Исходный рельеф без правок (холмы, гряды) */
@@ -160,6 +162,20 @@ export class Terrain {
 
     /** Высота земли в точке, м */
     height(x, z) {
+        const ground = this.groundHeight(x, z);
+        if (!this.course) return ground;
+        for (const ramp of this.course) {
+            const dx = x - ramp.x;
+            if (Math.abs(dx) >= ramp.hw) continue;
+            const dz = Math.abs(z - ramp.z - ramp.skew * dx);
+            if (dz >= ramp.run) continue;
+            const k = Math.min(1, (ramp.run - dz) / (ramp.run - ramp.flat), (ramp.hw - Math.abs(dx)) / 1.5);
+            return Math.max(ground, ramp.base + ramp.rise * k);
+        }
+        return ground;
+    }
+
+    groundHeight(x, z) {
         const n = this.n;
         let fx = (x - this.x0) / CELL, fz = (z - this.x0) / CELL;
         if (fx < 0) fx = 0; else if (fx > n - 1.001) fx = n - 1.001;

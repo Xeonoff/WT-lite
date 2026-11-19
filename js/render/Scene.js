@@ -172,8 +172,8 @@ export class Scene3D {
             // поза на рельефе: курс, тангаж (нос вверх), крен (правый борт вниз)
             vm.root.position.set(v.x, v.y || 0, v.z);
             vm.root.rotation.set(v.roll || 0, -v.a, v.pitch || 0);
-            vm.ringG.position.set(v.x, (v.y || 0) + 0.06, v.z);
-            vm.ringG.rotation.set(v.roll || 0, -v.a, v.pitch || 0);
+            vm.ringG.position.set(v.x, (v.suspension?.groundY ?? v.y) + 0.06, v.z);
+            vm.ringG.rotation.set(v.suspension?.groundRoll || 0, -v.a, v.suspension?.grade || 0);
             vm.ring.visible = seen && !v.dead && !(this.hideOwn && v.isPlayer);
             if (vm.loose !== vm.turret) vm.turret.rotation.y = -v.turretRel();
             vm.gun.rotation.y = -v.gunRel();
@@ -189,7 +189,8 @@ export class Scene3D {
                 continue;
             }
             // гусеницы
-            if (vm.setTrackPhase) vm.setTrackPhase(v.trackPhase);
+            if (vm.root.visible && v.suspension) vm.setSuspension?.(v.suspension);
+            if (vm.root.visible && vm.setTrackPhase) vm.setTrackPhase(v.trackPhase, v.suspension);
             for (let s = 0; s < 2; s++) {
                 if (!vm.setTrackPhase) vm.tracks[s].tex.offset.x = -v.trackPhase[s] / 0.7;
                 const dph = Math.abs(v.trackPhase[s] - vm.lastPhase[s]);

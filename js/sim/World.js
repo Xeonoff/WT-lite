@@ -2,6 +2,7 @@ import { Events } from "../core/Events.js";
 import { seeded, clamp, segObb, segCircle, circleObb, ptInObb, TAU, rayAabb } from "../core/Utils.js";
 import { rayConvex, raycastVehicle } from "./Armor.js";
 import { Terrain } from "./Terrain.js";
+import { canMountRock } from "./Suspension.js";
 
 /** Луч в системе объекта, повёрнутого на угол a вокруг вертикали (как экземпляры в WorldMesh) */
 function toLocal(o, a, p, d) {
@@ -344,6 +345,8 @@ export class World {
 
     addRock(x, z, r, h) {
         const rr = this.rng;
+        // Невысокие выходы камня встречаются среди обычных валунов.
+        if (r < 3 && this.rocks.length % 4 === 0) h = Math.min(h, 0.45);
         this.rocks.push({ x, z, r, h, rot: rr() * TAU, sx: rr.range(0.85, 1.2), sz: rr.range(0.85, 1.2), tint: rr() });
     }
 
@@ -627,13 +630,23 @@ export class World {
     /* ───────────────────── Полигон ───────────────────── */
     genRange() {
         const S = this.S, r = this.rng;
+        const lane = S / 2 + 20;
+        // Пологий вал, острый гребень и косой вал на одной проездной полосе.
+        this.course = [
+            { x: lane, z: S - 58, hw: 5, run: 6, flat: 1.6, rise: 0.85, skew: 0 },
+            { x: lane, z: S - 76, hw: 5, run: 3.8, flat: 0.18, rise: 1.65, skew: 0 },
+            { x: lane, z: S - 93, hw: 5, run: 3.4, flat: 0.55, rise: 1.1, skew: 0.65 },
+        ];
+        this.terrainPads = [{ x: lane, z: S - 74, hl: 9, hw: 32, blend: 5 }];
         this.makeRoad([[S / 2, S + 10], [S / 2, -10]], 7);
+        this.makeRoad([[S / 2, S - 40], [lane, S - 46], [lane, S - 103]], 6, "path");
         for (let i = 0; i < 6; i++) this.addRock(r.range(0.1, 0.25) * S, r.range(0.2, 0.8) * S, r.range(2, 4), r.range(2, 3.5));
         for (let i = 0; i < 6; i++) this.addRock(r.range(0.75, 0.9) * S, r.range(0.2, 0.8) * S, r.range(2, 4), r.range(2, 3.5));
         this.treeLine(20, 20, S - 20, 20, this.biome.treeKind, 0.05);
         this.treeLine(15, 30, 15, S - 30, this.biome.treeKind, 0.1);
         this.treeLine(S - 15, 30, S - 15, S - 30, this.biome.treeKind, 0.1);
         for (let i = 0; i < 10; i++) this.scatterBushes(r.range(0.05, 0.95) * S, r.range(0.1, 0.9) * S, 5, 2);
+        this.bushes = this.bushes.filter(b => Math.abs(b.x - lane) > 8 || Math.abs(b.z - (S - 74)) > 34);
     }
 
     /* ───────────────────── Пространственный хеш ───────────────────── */
@@ -833,7 +846,7 @@ export class World {
         }
         // соседние здания и скалы снова занимают свои клетки
         for (const o of this.buildings) if (!o.dead && Math.hypot(o.x - b.x, o.z - b.z) < R + 20) this.markNavObb(o, 2.6);
-        for (const o of this.rocks) if (Math.hypot(o.x - b.x, o.z - b.z) < R + 10) this.markNavCircle(o.x, o.z, o.r + 2.4, true);
+        for (const o of this.rocks) if (Math.hypot(o.x - b.x, o.z - b.z) < R + 10) this.markNavRock(o);
         Events.emit("worldChange", { type: "building", o: b });
     }
 
@@ -855,7 +868,7 @@ export class World {
         this.blocked = new Uint8Array(n * n);
         this.cost = new Float32Array(n * n).fill(1);
         for (const b of this.buildings) this.markNavObb(b, 2.6);
-        for (const o of this.rocks) this.markNavCircle(o.x, o.z, o.r + 2.4, true);
+        for (const o of this.rocks) this.markNavRock(o);
         for (const t of this.trees) this.markNavCircle(t.x, t.z, 2.2, false, 3);
         for (const f of this.fences) this.markNavCircle(f.x, f.z, 2.5, false, 1.6);
         for (const hy of this.hay) this.markNavCircle(hy.x, hy.z, hy.r + 1.5, false, 1.4);
@@ -866,6 +879,10 @@ export class World {
         for (let i = 0; i < n; i++) {
             for (const j of [0, n - 1]) { this.blocked[j * n + i] = 1; this.blocked[i * n + j] = 1; }
         }
+    }
+
+    markNavRock(o) {
+        this.markNavCircle(o.x, o.z, o.r + 2.4, o.h > 0.45, 1.6);
     }
 
     markNavCircle(x, z, r, block, cost = 1) {
@@ -1048,9 +1065,12 @@ class MinHeap {
     }
 }
 
-/** Столкновение машины с препятствиями мира. Возвращает суммарный вектор выталкивания */
+/** Коррекция проникновения и нормали отдельных контактов за шаг. */
 export function collideStatic(world, v, obb, dt) {
-    let px = 0, pz = 0, hit = false;
+    let px = 0, pz = 0, contacts;
+    function contact(nx, nz, o, soft = false) {
+        (contacts ??= []).push({ nx, nz, o, soft });
+    }
     const crusher = !!v.def.boss;
     for (const e of world.query(obb.x, obb.z, Math.hypot(obb.hl, obb.hw) + 4)) {
         const o = e.o;
@@ -1066,15 +1086,22 @@ export function collideStatic(world, v, obb, dt) {
         if (e.type === "building" || (e.type === "wreck" && o.v !== v)) {
             const box = { x: obb.x + px, z: obb.z + pz, a: obb.a, hl: obb.hl, hw: obb.hw };
             const m = obbObbLocal(box, o);
-            if (m) { px += m.x; pz += m.z; hit = true; }
+            if (m) {
+                contact(m.nx, m.nz, o);
+                px += m.x; pz += m.z;
+            }
         } else if (e.type === "rock" || e.type === "water") {
+            if (e.type === "rock" && canMountRock(v, o)) continue;
             const m = circleObb(o.x, o.z, e.type === "water" ? o.r : o.r * 0.9, { x: obb.x + px, z: obb.z + pz, a: obb.a, hl: obb.hl, hw: obb.hw });
-            if (m) { px -= m.x; pz -= m.z; hit = true; }
+            if (m) {
+                contact(-m.nx, -m.nz, o, e.type === "water");
+                px -= m.x; pz -= m.z;
+            }
         } else if (e.type === "tree" && o.alive && !o.fallen) {
             const m = circleObb(o.x, o.z, o.trunk + 0.2, { x: obb.x + px, z: obb.z + pz, a: obb.a, hl: obb.hl, hw: obb.hw });
             if (m) {
                 if (v.def.mob.mass > 8 && Math.abs(v.v) > 1.2) world.knockTree(o, v.a + (v.v < 0 ? Math.PI : 0));
-                else { px -= m.x; pz -= m.z; hit = true; }
+                else { contact(-m.nx, -m.nz, o); px -= m.x; pz -= m.z; }
             }
         } else if (e.type === "fence" && o.alive) {
             if (ptInObb(o.x, o.z, { x: obb.x, z: obb.z, a: obb.a, hl: obb.hl + 0.3, hw: obb.hw + 0.3 })) world.breakFence(o);
@@ -1090,7 +1117,7 @@ export function collideStatic(world, v, obb, dt) {
             }
         }
     }
-    return hit ? { x: px, z: pz } : null;
+    return contacts ? { x: px, z: pz, contacts } : null;
 }
 
 import { obbObb as obbObbLocal } from "../core/Utils.js";

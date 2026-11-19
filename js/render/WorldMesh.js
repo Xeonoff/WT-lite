@@ -59,7 +59,7 @@ function terrainGeometry(T, x0, z0, size, seg, lift = 0, shadeOut = null) {
         for (let i = 0; i < n; i++) {
             const k = j * n + i;
             const x = x0 + (i / seg) * size, z = z0 + (j / seg) * size;
-            pos[k * 3] = x; pos[k * 3 + 1] = T.height(x, z) + lift; pos[k * 3 + 2] = z;
+            pos[k * 3] = x; pos[k * 3 + 1] = T.groundHeight(x, z) + lift; pos[k * 3 + 2] = z;
             uv[k * 2] = i / seg; uv[k * 2 + 1] = 1 - j / seg;
             if (col) {
                 const S = shadeOut;
@@ -91,6 +91,7 @@ export class WorldMesh {
         this.biome = world.biome;
         this.group = new THREE.Group();
         this.buildGround();
+        for (const ramp of world.course || []) this.buildRamp(ramp);
         this.buildRiver();
         this.buildBuildings();
         this.buildTrees();
@@ -215,6 +216,29 @@ export class WorldMesh {
         const decal = new THREE.Mesh(terrainGeometry(T, 0, 0, S, Math.round(S / 2), 0.05), dm);
         decal.receiveShadow = true;
         this.group.add(decal);
+    }
+
+    buildRamp(ramp) {
+        const positions = [];
+        for (const top of [false, true]) {
+            const w = ramp.hw - (top ? 1.5 : 0), l = top ? ramp.flat : ramp.run;
+            for (const [x, z] of [[-w, -l], [-w, l], [w, l], [w, -l]]) {
+                positions.push(x, top ? ramp.rise : 0, z + ramp.skew * x);
+            }
+        }
+        const indices = [4, 5, 6, 4, 6, 7];
+        for (let i = 0; i < 4; i++) {
+            const j = (i + 1) % 4;
+            indices.push(i, j, i + 4, j, j + 4, i + 4);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geo.setIndex(indices);
+        geo.computeVertexNormals();
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x9b9486, flatShading: true, roughness: 0.97 }));
+        mesh.position.set(ramp.x, ramp.base, ramp.z);
+        mesh.castShadow = mesh.receiveShadow = true;
+        this.group.add(mesh);
     }
 
     /* ─────────── Река и переправы ─────────── */

@@ -258,12 +258,14 @@ const LINK_PITCH = BELT.total / LINK_COUNT;
 
 const _dummy = new THREE.Object3D();
 /** Раскладка траков гусеницы по ленте со сдвигом offset (м) */
-export function layoutTrack(tr, offset) {
+export function layoutTrack(tr, offset, lift) {
     const x = tr.userData.side * TRACK.x;
     for (let i = 0; i < LINK_COUNT; i++) {
         const p = BELT.at(i * LINK_PITCH + offset);
-        _dummy.position.set(x, p.y, p.z);
-        _dummy.rotation.set(Math.atan2(-p.dy, p.dz), 0, 0);
+        const dy = lift ? lift(p.z, p.y) : 0;
+        const slope = lift ? (lift(p.z + 0.05, p.y) - dy) / 0.05 : 0;
+        _dummy.position.set(x, p.y + dy, p.z);
+        _dummy.rotation.set(Math.atan2(-p.dy - slope * p.dz, p.dz), 0, 0);
         _dummy.updateMatrix();
         tr.setMatrixAt(i, _dummy.matrix);
     }

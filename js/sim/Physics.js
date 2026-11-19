@@ -1,5 +1,6 @@
 import { obbObb, clamp } from "../core/Utils.js";
 import { collideStatic } from "./World.js";
+import { collisionDamage } from "./Damage.js";
 
 export function vehicleObb(v) {
     return { x: v.x, z: v.z, a: v.a, hl: v.def.dims.L / 2, hw: v.def.dims.W / 2 };
@@ -15,7 +16,7 @@ export function driveVehicle(v, dt) {
         if (inp.throttle > 0) target = inp.throttle * v.maxSpeed();
         else if (inp.throttle < 0) target = inp.throttle * v.maxReverse();
         // склон: в гору медленнее, под гору — чуть быстрее
-        const up = Math.sin(v.pitch || 0) * Math.sign(target);
+        const up = Math.sin(v.suspension?.grade || 0) * Math.sign(target);
         target *= clamp(1 - up * 2.6, 0.3, 1.15);
     }
     const acc = v.accel();
@@ -39,28 +40,82 @@ export function driveVehicle(v, dt) {
     v.w += clamp(wTarget - v.w, -tr * 5 * dt - 0.01, tr * 5 * dt + 0.01);
     if (!can) v.w *= Math.max(0, 1 - dt * 6);
     v.a += v.w * dt;
-    v.x += Math.cos(v.a) * v.v * dt;
-    v.z += Math.sin(v.a) * v.v * dt;
+    v.slip *= Math.exp(-4 * dt);
+    const c = Math.cos(v.a), s = Math.sin(v.a);
+    v.x += (c * v.v - s * v.slip) * dt;
+    v.z += (s * v.v + c * v.slip) * dt;
     const hw = v.def.dims.W / 2;
     v.trackPhase[0] += (v.v + v.w * hw) * dt;
     v.trackPhase[1] += (v.v - v.w * hw) * dt;
 }
 
-/**
- * Машина ложится на рельеф: высота — по опорным точкам гусениц (на гребне — по середине,
- * в ложбине — по концам), тангаж и крен — по разнице высот носа/кормы и бортов.
- */
-export function settleOnGround(v, world) {
-    const T = world.terrain;
-    if (!T) return;
-    const L = v.def.dims.L * 0.42, W = v.def.dims.W * 0.42;
+export { settleOnGround } from "./Suspension.js";
+
+// Проекция опорной грани (или угла) прямоугольника на нормаль и касательную.
+function support(box, nx, nz, sign) {
+    const c = Math.cos(box.a), s = Math.sin(box.a);
+    const f = nx * c + nz * s, r = nz * c - nx * s;
+    const n = box.x * nx + box.z * nz + sign * (box.hl * Math.abs(f) + box.hw * Math.abs(r));
+    let t = -box.x * nz + box.z * nx, span = 0;
+    if (Math.abs(f) < 0.001) span += box.hl * Math.abs(r);
+    else t -= sign * Math.sign(f) * box.hl * r;
+    if (Math.abs(r) < 0.001) span += box.hw * Math.abs(f);
+    else t += sign * Math.sign(r) * box.hw * f;
+    return { n, lo: t - span, hi: t + span };
+}
+
+function contactBody(v, x, z, nx, nz) {
     const c = Math.cos(v.a), s = Math.sin(v.a);
-    const hf = T.height(v.x + c * L, v.z + s * L), hb = T.height(v.x - c * L, v.z - s * L);
-    const hr = T.height(v.x - s * W, v.z + c * W), hl = T.height(v.x + s * W, v.z - c * W);
-    const hc = T.height(v.x, v.z);
-    v.pitch = Math.atan2(hf - hb, 2 * L);
-    v.roll = Math.atan2(hl - hr, 2 * W);
-    v.y = Math.max(hc, (hf + hb) / 2, (hl + hr) / 2);
+    const forward = c * nx + s * nz, side = c * nz - s * nx;
+    const arm = (x - v.x) * nz - (z - v.z) * nx;
+    const invMass = v.static ? 0 : 1 / v.def.mob.mass;
+    const { L, W } = v.def.dims;
+    const invInertia = 12 * invMass / (L * L + W * W);
+    return {
+        speed: v.v * forward + v.slip * side + v.w * arm,
+        response: invMass + arm * arm * invInertia,
+        apply(j) {
+            v.v += j * invMass * forward;
+            v.slip += j * invMass * side;
+            v.w += j * invInertia * arm;
+        },
+    };
+}
+
+function impact(a, b, obstacle, nx, nz, battle) {
+    const face = support(vehicleObb(a), nx, nz, -1);
+    const other = b ? vehicleObb(b) : obstacle;
+    const t = -other.x * nz + other.z * nx;
+    const edge = other.hl !== undefined ? support(other, nx, nz, 1) : { lo: t, hi: t };
+    const mid = clamp((Math.max(face.lo, edge.lo) + Math.min(face.hi, edge.hi)) / 2, face.lo, face.hi);
+    const x = face.n * nx - mid * nz, z = face.n * nz + mid * nx;
+    const A = contactBody(a, x, z, nx, nz), B = b && contactBody(b, x, z, nx, nz);
+    const closing = (B?.speed || 0) - A.speed;
+    const response = A.response + (B?.response || 0);
+    if (closing <= 0 || response <= 0) return;
+    const impulse = closing / response; // неупругий контакт; единицы массы игры — тонны
+    A.apply(impulse);
+    B?.apply(-impulse);
+    if (battle) {
+        if (closing > 1) {
+            a.impactSeq = (a.impactSeq || 0) + 1;
+            if (b) b.impactSeq = (b.impactSeq || 0) + 1;
+        }
+        collisionDamage(battle, a, b, x, z, impulse);
+        if (b) collisionDamage(battle, b, a, x, z, impulse);
+    }
+}
+
+export function resolveWorldContact(world, v, dt, battle) {
+    if (v.static) return;
+    const push = collideStatic(world, v, vehicleObb(v), dt);
+    if (!push) return;
+    v.x += push.x; v.z += push.z;
+    if (battle) v.bumpT = battle.time;
+    for (const { nx, nz, o, soft } of push.contacts) {
+        if (v.dead) break;
+        impact(v, null, o, nx, nz, soft ? null : battle);
+    }
 }
 
 /** Столкновения с миром и между машинами */
@@ -69,13 +124,7 @@ export function resolveCollisions(battle) {
     const S = battle.world.S;
     for (const v of vs) {
         if (v.dead) continue;
-        const m = collideStatic(battle.world, v, vehicleObb(v), battle.lastDt);
-        if (m) {
-            v.x += m.x; v.z += m.z;
-            const l = Math.hypot(m.x, m.z) || 1;
-            const dot = (Math.cos(v.a) * m.x + Math.sin(v.a) * m.z) / l;
-            if (v.v * dot < 0) { v.v *= 1 - 0.85 * Math.abs(dot); v.bumpT = battle.time; }
-        }
+        resolveWorldContact(battle.world, v, battle.lastDt, battle);
         const pad = 6;
         if (v.x < pad || v.x > S - pad || v.z < pad || v.z > S - pad) {
             v.x = clamp(v.x, pad, S - pad);
@@ -88,20 +137,18 @@ export function resolveCollisions(battle) {
         if (A.dead) continue;
         for (let j = i + 1; j < vs.length; j++) {
             const B = vs[j];
-            if (B.dead) continue;
+            if (A.dead) break;
+            if (B.dead || (A.static && B.static)) continue;
             const rr = A.def.bodyRadius + B.def.bodyRadius;
             const dx = A.x - B.x, dz = A.z - B.z;
             if (dx * dx + dz * dz > rr * rr) continue;
             const m = obbObb(vehicleObb(A), vehicleObb(B));
             if (!m) continue;
-            const ma = A.static ? 1e6 : A.def.mob.mass, mb = B.static ? 1e6 : B.def.mob.mass;
-            const ka = mb / (ma + mb), kb = ma / (ma + mb);
+            const ia = A.static ? 0 : 1 / A.def.mob.mass, ib = B.static ? 0 : 1 / B.def.mob.mass;
+            const ka = ia / (ia + ib), kb = ib / (ia + ib);
             A.x += m.x * ka; A.z += m.z * ka;
             B.x -= m.x * kb; B.z -= m.z * kb;
-            for (const [V, sgn] of [[A, 1], [B, -1]]) {
-                const dot = Math.cos(V.a) * m.nx * sgn + Math.sin(V.a) * m.nz * sgn;
-                if (V.v * dot < 0) V.v *= 1 - 0.7 * Math.abs(dot);
-            }
+            impact(A, B, null, m.nx, m.nz, battle);
             A.bumpT = B.bumpT = battle.time;
         }
     }

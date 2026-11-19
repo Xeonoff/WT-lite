@@ -110,8 +110,8 @@ export class Battle {
         if (def.boss) {
             // босс: свои системы (экипаж-роли, станции вооружения) и свой ИИ
             v.boss = new RatteSystems(v, this);
-            v.brain = new RatteBrain(v, this);
-        } else if (!opts.pilot && !opts.static) {
+            if (!v.rangeTarget) v.brain = new RatteBrain(v, this);
+        } else if (!opts.pilot && !opts.static && !v.rangeTarget) {
             let skill = opts.skill ?? 0.55;
             if (team !== this.playerTeam) skill = clamp(skill * this.difficulty, 0.2, 0.95);
             v.brain = new Brain(v, this, skill);
@@ -203,7 +203,7 @@ export class Battle {
             if (v.fire) fireTick(this, v, dt);
         }
         resolveCollisions(this);
-        for (const v of this.vehicles) if (!v.dead) settleOnGround(v, this.world);
+        for (const v of this.vehicles) if (!v.dead) settleOnGround(v, this.world, dt);
         this.updateStrikes(dt);
         updateShots(this, dt);
         this.spotAcc -= dt;
@@ -366,7 +366,7 @@ export class Battle {
             e.visible[e.team] = true;
             const t = 1 - e.team;
             // босс виден всегда: 11 м высоты не спрятать
-            if (e.static || e.def.boss) { e.visible[t] = true; continue; }
+            if (e.rangeTarget || e.static || e.def.boss) { e.visible[t] = true; continue; }
             let seen = false;
             const fired = now - e.lastShot < C.FIRED_REVEAL;
             for (const o of this.vehicles) {

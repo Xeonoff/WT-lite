@@ -11,8 +11,7 @@ import { angDiff, clamp } from "../core/Utils.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { SHELLS, SHELL_TYPES } from "../data/Shells.js";
 import { applyOwn, unpackRes, F_DEAD, F_FIRE, F_SPOTTED, F_SMOKE, INPUT_HZ, WORLD_LISTS, STATIONS_NET, r2 } from "./Protocol.js";
-import { driveVehicle, vehicleObb, settleOnGround } from "../sim/Physics.js";
-import { collideStatic } from "../sim/World.js";
+import { driveVehicle, resolveWorldContact, settleOnGround } from "../sim/Physics.js";
 
 const INTERP = 0.12;        // задержка интерполяции чужих машин, с
 const EXTRAP_MAX = 0.2;     // предел экстраполяции при потере пакетов, с
@@ -157,9 +156,18 @@ export class NetBattle extends Battle {
             seen.add(v);
             const st = { tm: s.tm, x: a[1], z: a[2], a: a[3], v: a[4], w: a[5], tr: a[6], gp: a[10] || 0 };
             if (a[11] && v.stn) v.stTarget = a[11];
+            st.slip = a[12] || 0;
+            if (v.isPlayer && s.me?.impact !== undefined && v.impactSeq !== s.me.impact) {
+                v.impactSeq = s.me.impact;
+                v.v = st.v; v.w = st.w; v.slip = st.slip;
+            }
             // машина снова появилась из засвета — старые точки буфера не годятся для интерполяции
             if (!v.visible[T]) v.buf.length = 0;
-            if (!v.buf.length) { v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.gp = st.gp; }
+            if (!v.buf.length) {
+                v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.gp = st.gp;
+                v.v = st.v; v.w = st.w; v.slip = st.slip;
+                settleOnGround(v, this.world);
+            }
             v.buf.push(st);
             if (v.buf.length > 10) v.buf.shift();
             const f = a[7];
@@ -250,6 +258,7 @@ export class NetBattle extends Battle {
                     break;
                 }
                 case "mod": { const v = V(e.v); if (v) Events.emit("modDestroyed", { v, id: e.id, type: e.ty }); break; }
+                case "collision": { const v = V(e.v); if (v) Events.emit("collisionDamage", { v, severe: e.severe }); break; }
                 case "ko": { const v = V(e.v); if (v) Events.emit("crewKO", { v, seat: e.s }); break; }
                 case "swap": { const v = V(e.v); if (v) Events.emit("crewSwap", { v, member: { home: e.h }, from: e.f, to: e.to, dur: e.d }); break; }
                 case "swapd": { const v = V(e.v); if (v) Events.emit("crewSwapDone", { v, member: { home: e.h }, to: e.to }); break; }
@@ -292,7 +301,12 @@ export class NetBattle extends Battle {
         const list = this.world[WORLD_LISTS[e.ty]];
         const o = list && list[e.i];
         if (!o) return;
-        if (e.ty === "tree") this.world.knockTree(o, e.a);
+        if (e.ty === "tree") {
+            if (o.fallen && o.fallA !== e.a) {
+                o.fallA = e.a;
+                Events.emit("worldChange", { type: "tree", o });
+            } else this.world.knockTree(o, e.a);
+        }
         else if (e.ty === "fence") this.world.breakFence(o);
         else if (e.ty === "hay") this.world.breakHay(o);
         else if (e.ty === "hedge") this.world.breakHedge(o);
@@ -321,11 +335,12 @@ export class NetBattle extends Battle {
         const rt = this.time - INTERP;
         for (const v of this.vehicles) {
             if (v.dead || !v.buf.length) continue;
-            if (v.isPlayer) { if (dt > 0) this.predictOwn(v, rdt); settleOnGround(v, this.world); continue; }
+            if (v.isPlayer) { if (dt > 0) this.predictOwn(v, rdt); continue; }
             const ox = v.x, oz = v.z, otr = v.tr;
             const st = this.sample(v.buf, rt);
             v.x = st.x; v.z = st.z; v.a = st.a; v.tr = st.tr; v.v = st.v; v.w = st.w; v.gp = st.gp;
-            settleOnGround(v, this.world);
+            v.slip = st.slip;
+            settleOnGround(v, this.world, dt);
             // станции босса — плавно к углам из снимка
             if (v.stTarget && dt > 0) STATIONS_NET.forEach((k, i) => {
                 const S = v.stn[k], T = v.stTarget[i];
@@ -368,14 +383,12 @@ export class NetBattle extends Battle {
      */
     predictOwn(p, dt) {
         if (dt <= 0) return;
-        const ox = p.x, oz = p.z;
         // та же физика, что на сервере, шагами не длиннее серверного тика
         for (let left = dt; left > 1e-4;) {
             const h = Math.min(left, 1 / 30);
             driveVehicle(p, h);
-            const push = collideStatic(this.world, p, vehicleObb(p), h);
-            if (push) { p.x += push.x; p.z += push.z; }
-            settleOnGround(p, this.world);
+            resolveWorldContact(this.world, p, h);
+            settleOnGround(p, this.world, h);
             this.aimTurret(p, h);
             left -= h;
         }
@@ -383,7 +396,9 @@ export class NetBattle extends Battle {
         const s = p.buf[p.buf.length - 1];
         const e = clamp(this.time + (this.net.rtt || 0) / 2000 - s.tm, 0, 0.3);
         const ta = s.a + s.w * e;
-        const tx = s.x + Math.cos(ta) * s.v * e, tz = s.z + Math.sin(ta) * s.v * e;
+        const slide = s.slip * (1 - Math.exp(-4 * e)) / 4;
+        const tx = s.x + Math.cos(ta) * s.v * e - Math.sin(ta) * slide;
+        const tz = s.z + Math.sin(ta) * s.v * e + Math.cos(ta) * slide;
         const err = Math.hypot(tx - p.x, tz - p.z), errA = Math.abs(angDiff(p.a, ta));
         // сервер видит наш ввод с запаздыванием: такая разница — норма, её гасим медленно,
         // а всё, что сверх неё, — быстро
@@ -395,7 +410,7 @@ export class NetBattle extends Battle {
         };
         if (err > 4 || errA > 0.6) {
             // сильное расхождение (столкновение, рывок сервера) — сразу к серверу
-            p.x = tx; p.z = tz; p.a = ta; p.v = s.v; p.w = s.w;
+            p.x = tx; p.z = tz; p.a = ta; p.v = s.v; p.w = s.w; p.slip = s.slip * Math.exp(-4 * e);
         } else if (err > 1e-4) {
             const f = fix(err, 0.2 + Math.abs(s.v) * lag) / err;
             p.x += (tx - p.x) * f;
@@ -404,11 +419,6 @@ export class NetBattle extends Battle {
         }
         p.tr += fix(angDiff(p.tr, s.tr), 0.01 + p.turretRate() * lag);
         p.gp += fix(s.gp - p.gp, 0.003 + p.elevRate() * lag);
-        const hw = p.def.dims.W / 2;
-        if (Math.hypot(p.x - ox, p.z - oz) < 6) {
-            p.trackPhase[0] += (p.v + p.w * hw) * dt;
-            p.trackPhase[1] += (p.v - p.w * hw) * dt;
-        }
     }
 
     sample(buf, rt) {
@@ -421,6 +431,7 @@ export class NetBattle extends Battle {
                     x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k,
                     a: a.a + angDiff(a.a, b.a) * k, tr: a.tr + angDiff(a.tr, b.tr) * k, gp: a.gp + (b.gp - a.gp) * k,
                     v: a.v + (b.v - a.v) * k, w: a.w + (b.w - a.w) * k,
+                    slip: a.slip + (b.slip - a.slip) * k,
                 };
             }
         }
@@ -430,7 +441,8 @@ export class NetBattle extends Battle {
     extrapolate(s, t) {
         const e = clamp(t - s.tm, 0, EXTRAP_MAX);
         const a = s.a + s.w * e;
-        return { x: s.x + Math.cos(a) * s.v * e, z: s.z + Math.sin(a) * s.v * e, a, tr: s.tr, gp: s.gp, v: s.v, w: s.w };
+        const slide = s.slip * (1 - Math.exp(-4 * e)) / 4;
+        return { x: s.x + Math.cos(a) * s.v * e - Math.sin(a) * slide, z: s.z + Math.sin(a) * s.v * e + Math.cos(a) * slide, a, tr: s.tr, gp: s.gp, v: s.v, w: s.w, slip: s.slip * Math.exp(-4 * e) };
     }
 
     sendInput() {

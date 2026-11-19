@@ -22,7 +22,7 @@ let current = null;
 
 const EVENT_NAMES = [
     "spawn", "vehicleRemoved", "playerSpawn", "shot", "hit", "splashDamage", "impact", "explosion", "destroyed",
-    "modDestroyed", "crewKO", "crewSwap", "crewSwapDone", "fireStart", "fireOut", "repairStart", "repairDone",
+    "modDestroyed", "collisionDamage", "crewKO", "crewSwap", "crewSwapDone", "fireStart", "fireOut", "repairStart", "repairDone",
     "repairCancel", "medkit", "reloaded", "resupply", "pointChange", "artyCalled", "artyShell", "worldChange", "battleEnd",
     "bossNote", "bossAim", "pickup",
 ];
@@ -393,6 +393,7 @@ export class Room {
             case "explosion": all({ e: "exp", p: rv([e.x, e.y, e.z]), sz: r2(e.size), in: e.inside ? 1 : 0, gr: e.ground === false ? 0 : 1 }); break;
             case "destroyed": all({ e: "dead", id: e.v.id, c: e.cause, k: idOf(e.killer), x: r2(e.v.x), z: r2(e.v.z), a: r2(e.v.a) }); break;
             case "modDestroyed": owner(e.v, { e: "mod", v: e.v.id, id: e.id, ty: e.type }); break;
+            case "collisionDamage": owner(e.v, { e: "collision", v: e.v.id, severe: e.severe }); break;
             case "crewKO": owner(e.v, { e: "ko", v: e.v.id, s: e.seat }); break;
             case "crewSwap": owner(e.v, { e: "swap", v: e.v.id, h: e.member.home, f: e.from, to: e.to, d: e.dur }); break;
             case "crewSwapDone": owner(e.v, { e: "swapd", v: e.v.id, h: e.member.home, to: e.to }); break;

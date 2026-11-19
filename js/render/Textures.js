@@ -93,9 +93,30 @@ export function trackTexture() {
     return t;
 }
 
+/** Торец вращающегося опорного катка. Рисунок ступицы позволяет видеть вращение. */
+export function roadWheelTexture(type) {
+    const key = "road-wheel:" + type;
+    if (cache.has(key)) return cache.get(key);
+    const c = mkCanvas(128, 128), g = c.getContext("2d");
+    const disc = (x, y, r, color) => {
+        g.fillStyle = color;
+        g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill();
+    };
+    g.fillStyle = "#252620"; g.fillRect(0, 0, 128, 128);
+    disc(64, 64, type === "interleaved" ? 60 : 54, "#646453");
+    disc(64, 64, 45, "#494a3e");
+    for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        disc(64 + Math.cos(a) * 32, 64 + Math.sin(a) * 32, type === "christie" ? 7 : 3, type === "christie" ? "#25251f" : "#818070");
+    }
+    disc(64, 64, 16, "#686858"); disc(64, 64, 9, "#43443a");
+    const t = tex(c, false);
+    cache.set(key, t);
+    return t;
+}
+
 /**
- * Борт ходовой части в масштабе 1:1 (для круглых катков): ведущее колесо, ленивец,
- * опорные катки по типу подвески и поддерживающие ролики.
+ * Неподвижные детали борта: ведущее колесо, ленивец и поддерживающие ролики.
  * Координаты текстуры: u = x / Lt + 0.5, v = y / th.
  */
 export function runningGearTexture(def, Lt, Lb, rS) {
@@ -144,17 +165,6 @@ export function runningGearTexture(def, Lt, Lb, rS) {
     };
     const sus = def.susp;
     const n = sus.wheels;
-    const rw = th * ({ christie: 0.47, kv: 0.33, interleaved: 0.44, small: n >= 8 ? 0.26 : n === 5 ? 0.36 : 0.31 }[sus.type] || 0.3);
-    const x0 = -Lb / 2 + rw * 0.55, x1 = Lb / 2 - rw * 0.55;
-    const pos = Array.from({ length: n }, (_, i) => x0 + (x1 - x0) * (n === 1 ? 0.5 : i / (n - 1)));
-    const wy = rw + 0.06;
-    if (sus.type === "interleaved") {
-        const step = (x1 - x0) / (n - 1);
-        for (const x of pos.slice(0, -1)) wheel(x + step / 2, wy + 0.01, rw, "steel", 0.72);
-        for (const x of pos) wheel(x, wy, rw, "steel", 1);
-    } else {
-        for (const x of pos) wheel(x, wy, rw, sus.type === "christie" ? "holes" : "rubber", 1);
-    }
     // поддерживающие ролики
     if (sus.type === "kv" || (sus.type === "small" && n >= 6)) {
         const m = sus.type === "kv" ? 3 : 4;

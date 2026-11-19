@@ -109,7 +109,7 @@ export class Game {
                 if (opts.mode === "range" && first) this.spawn(first);
                 else this.screens.openSpawn({ title: "ВЫБОР ТЕХНИКИ" });
                 const m = this.battle.world.map;
-                this.hud.banner(opts.mode === "range" ? "ПОЛИГОН" : m.name.toUpperCase(), opts.mode === "range" ? "испытание техники" : this.battle.weather.name.toLowerCase() + " · " + MODES[opts.mode].name.toLowerCase());
+                this.hud.banner(opts.mode === "range" ? "ПОЛИГОН" : m.name.toUpperCase(), opts.mode === "range" ? "Полоса препятствий справа от старта" : this.battle.weather.name.toLowerCase() + " · " + MODES[opts.mode].name.toLowerCase());
                 if (this.battle.weather.spotK < 0.8) setTimeout(() => this.hud.log(`${this.battle.weather.name}: дальность обнаружения снижена до ~${Math.round(Config.SPOT.RANGE * this.battle.weather.spotK)} м`, "tip", 7000), 1200);
             } catch (e) {
                 console.error(e);
@@ -850,6 +850,11 @@ export class Game {
                 this.hud.banner("МАШИНА УНИЧТОЖЕНА", (killer && killer !== v ? "уничтожил: " + killer.callsign + " · " + killer.def.name + " · " : "") + this.deathCause, "lose");
                 this.vignette(1.4);
             }
+        });
+        Events.on("collisionDamage", ({ v, severe }) => {
+            if (!isP(v)) return;
+            this.vignette(severe ? 0.65 : 0.25);
+            this.hud.log("Повреждения от столкновения", "bad");
         });
         Events.on("crewKO", (e) => {
             if (isP(e.v)) this.hud.log(e.v.def.crewTitles[e.seat] + " выбыл", "bad");
