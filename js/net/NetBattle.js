@@ -109,7 +109,7 @@ export class NetBattle extends Battle {
         const def = getVehicle(o.def);
         if (!def) return null;
         const mine = o.pid && o.pid === this.local.id;
-        v = new Vehicle(def, o.team, o.x, o.z, o.a, { isPlayer: mine, static: o.st });
+        v = new Vehicle(def, o.team, o.x, o.z, o.a, { isPlayer: mine, static: o.st, equipment: o.equipment });
         v.id = o.id;
         v.callsign = mine ? "Вы" : o.cs;
         v.pilot = o.pid ? { id: o.pid } : null;
@@ -271,6 +271,7 @@ export class NetBattle extends Battle {
                 }
                 case "fout": { const v = V(e.v); if (v) { v.fire = null; Events.emit("fireOut", { v, ext: !!e.x }); } break; }
                 case "rep": { const v = V(e.v); if (v) Events.emit("repairStart", { v, dur: e.d }); break; }
+                case "archive": { const v = V(e.v); if (v) Events.emit("archiveProc",{v,id:e.id}); break; }
                 case "repd": { const v = V(e.v); if (v) Events.emit("repairDone", { v }); break; }
                 case "repc": { const v = V(e.v); if (v) Events.emit("repairCancel", { v }); break; }
                 case "med": { const v = V(e.v); if (v) Events.emit("medkit", { v, healed: e.n }); break; }

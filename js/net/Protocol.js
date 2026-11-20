@@ -4,7 +4,7 @@
  */
 import { SHELLS } from "../data/Shells.js";
 
-export const PROTO_VERSION = 4;
+export const PROTO_VERSION = 6;
 export const TICK_HZ = 30;          // шаг симуляции на сервере
 export const SNAP_EVERY = 2;        // снимок состояния — каждый второй шаг (15 Гц)
 export const SNAP_HZ = TICK_HZ / SNAP_EVERY;

@@ -1,0 +1,159 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { getVehicle } from "../js/data/VehicleBuild.js";
+import { readLoadout, rollDrop, rollItem, TARGETS } from "../js/data/Archive.js";
+import { CARD_POOLS, cardFor } from "../js/data/ArchiveCards.js";
+import { cardEvent } from "../js/sim/ArchiveEffects.js";
+import { Battle } from "../js/sim/Battle.js";
+import { Vehicle } from "../js/sim/Vehicle.js";
+import { NetBattle } from "../js/net/NetBattle.js";
+import { Room } from "./Room.js";
+import { applyOwn, packOwn } from "../js/net/Protocol.js";
+
+test("Loot eligibility, rarity intervals and all documented specializations", () => {
+    const zero = () => 0;
+    assert.equal(rollDrop(false,false,1,zero), null);
+    assert.equal(rollDrop(true,true,0,zero), null);
+    assert.equal(rollDrop(false,true,1,()=>.74), "plan");
+    assert.equal(rollDrop(true,true,1,()=>.75), null);
+    assert.equal(rollDrop(true,false,1,()=>.30), null);
+    assert.equal(rollDrop(true,false,1,zero), "dossier");
+    for (const kind of Object.keys(TARGETS)) {
+        for (const [tier,roll] of [.01,.49,.78,.93,.99].entries()) {
+            const types = Object.keys(TARGETS[kind]);
+            for (const [index,target] of types.entries()) {
+                const row = CARD_POOLS[target][tier];
+                assert.equal(row.length,[10,8,7,4,3][tier]);
+                assert.equal(new Set(row.map(c=>c.id)).size,row.length);
+                for (const [j,card] of row.entries()) {
+                    const draws = [roll,(index+.5)/types.length,(j+.5)/row.length];
+                    assert.equal(cardFor(rollItem(kind,()=>draws.shift())),card);
+                    assert.ok(card.name && card.text && !card.text.includes("undefined"));
+                    assert.equal([card.hp,card.mods,card.event,card.salvage].filter(Boolean).length,1);
+                }
+            }
+        }
+    }
+});
+
+test("Old profile, idempotent receipt and opening, exclusive assignments and persistence", async () => {
+    const db = new Map([["wtl_profile_v2",JSON.stringify({bestWave:8})]]);
+    globalThis.localStorage = { getItem:k=>db.get(k), setItem:(k,v)=>db.set(k,v) };
+    const {Profile:p} = await import("../js/core/Profile.js?archive-migration");
+    assert.equal(p.data.bestWave,8);
+    assert.deepEqual(p.data.archive,[]);
+    for (const source of ["one","two"]) {
+        assert.ok(p.receiveCase("plan",source));
+        assert.equal(p.receiveCase("plan",source),false);
+        const item = p.data.archive.at(-1);
+        assert.equal(p.openCase(item.id),item);
+        assert.equal(p.openCase(item.id),null);
+        Object.assign(item,{target:"track",tier:4,card:"back-workshop"});
+    }
+    assert.ok(p.assignItem(1,"t34_41","trackL"));
+    assert.equal(p.assignItem(2,"t34_41","trackL"),false);
+    assert.equal(p.assignItem(1,"t34_41","engine"),false);
+    assert.ok(p.assignItem(1,"kv1","trackR"));
+    assert.deepEqual(Object.keys(p.equipment()),["kv1"]);
+    const {Profile:reloaded} = await import("../js/core/Profile.js?archive-reload");
+    assert.deepEqual(reloaded.equipment(),p.equipment());
+    assert.ok(reloaded.unassignItem(1));
+    assert.deepEqual(reloaded.equipment(),{});
+});
+
+test("Online match results award participants individually, including on a defeat", t => {
+    t.mock.method(Math, "random", () => 0);
+    const sent = [];
+    const members = [0,1,1].map((team,index) => ({ pilot: {team, spawns:index===2 ? 0 : 1, stats:{}, vstats:{}},
+        client:{send:m=>sent.push(m.r)} }));
+    Room.prototype.onBattleEnd.call({members,flushEvents(){}},
+        {winner:0,mode:"duel",reason:"",rewardId:"battle-1",pilots:[]});
+    assert.deepEqual(sent.map(r=>[r.win,r.drop,r.rewardId]),[
+        [true,"dossier","battle-1"],[false,"dossier","battle-1"],[false,null,"battle-1"],
+    ]);
+});
+
+test("Existing documents keep their identity, rarity and assignment across migration", async () => {
+    const old = {id:7,kind:"dossier",tier:3,target:"driver",vehicle:"kv1",slot:"driver",source:"previous"};
+    const sealed = {id:8,kind:"plan",tier:null,source:"sealed",vehicle:null,slot:null};
+    const db=new Map([["wtl_profile_v2",JSON.stringify({archive:[old,sealed]})]]);
+    globalThis.localStorage={getItem:k=>db.get(k),setItem:(k,v)=>db.set(k,v)};
+    const {Profile:p}=await import("../js/core/Profile.js?old-card");
+    assert.deepEqual(p.data.archive[0],{...old,card:CARD_POOLS.driver[3][2].id});
+    assert.deepEqual(p.data.archive[1],sealed);
+    p.save();
+    const {Profile:q}=await import("../js/core/Profile.js?old-card-again");
+    assert.deepEqual(q.equipment(),p.equipment());
+});
+
+test("Specific rack pays for nested ammunition, preserves the last rounds and cannot spend other racks' HP", () => {
+    const def=getVehicle("kv1"), [slot,other]=def.rackOrder;
+    const gear = (card,tier) => [{id:1,kind:"plan",target:"ammo",slot,tier,card}];
+    const tank = equipment=>new Vehicle(def,0,0,0,0,{equipment});
+    const v=tank(gear("lastRound-nest",4)), sid=v.shell, rack=v.mods[slot], spare=v.mods[other];
+    v.ammo[sid]=1;
+    v.consumeShot();
+    assert.equal(v.ammo[sid],4);
+    assert.equal(rack.hp,rack.maxHp*.8);
+    assert.equal(spare.hp,spare.maxHp);
+    rack.hp=rack.maxHp*.1;
+    v.loaded=sid; v.ammo[sid]=1; v.consumeShot();
+    assert.equal(v.ammo[sid],0);
+    const insured=tank(gear("escrow",2));
+    assert.ok(insured.rackFills()[slot]>0);
+    assert.equal(insured.loseRack(slot),0);
+    assert.equal(insured.medkits,0);
+    assert.ok(insured.loseRack(other)>0);
+});
+
+test("Pendulum alternates, paid cards consume resources only on success and costs stay on their carrier", () => {
+    const def=getVehicle("kv1");
+    const v=new Vehicle(def,0,0,0,0,{equipment:[
+        {id:1,kind:"plan",slot:"breech",target:"breech",tier:4,card:"shot-pendulum"},
+        {id:2,kind:"dossier",slot:"radio",target:"radio",tier:4,card:"arty-signal"},
+    ]});
+    const base=v.reloadTime();
+    v.consumeShot(); assert.equal(v.reload,base*3);
+    v.loaded=v.shell; v.consumeShot(); assert.equal(v.reload,base*.1);
+    v.artyT=70; cardEvent(v,"arty",1,10); assert.equal(v.artyT,25); assert.equal(v.ext,1);
+    cardEvent(v,"arty",1,30); assert.equal(v.ext,1);
+    v.seats.radio.occupant.transit=true;
+    v.artyT=100; cardEvent(v,"arty",1,10); assert.equal(v.artyT,100);
+});
+
+test("Server validates individual slots and applies the same gear on spawn and client rejoin", () => {
+    const def = getVehicle("kv1");
+    const entries = [
+        { id:1,kind:"dossier",target:"driver",slot:"driver",tier:4,card:"critical-rewind" },
+        { id:2,kind:"plan",target:"track",slot:"trackL",tier:0,card:"reserve" },
+        { id:3,kind:"plan",target:"breech",slot:"breech",tier:0,card:"standard" },
+    ];
+    const used = new Set();
+    assert.deepEqual(readLoadout(def,[...entries,{...entries[0],id:4},{...entries[1],slot:"trackR"},
+        {...entries[1],id:5,tier:9,slot:"trackR"},{...entries[1],id:6,slot:"engine"}],used), entries);
+    assert.deepEqual(readLoadout(getVehicle("bt7"),entries,used),[]);
+    const b = new Battle({mode:"duel",mapId:"prokhorovka",nations:["ussr","germany"],pilots:[
+        {id:"p",name:"Pilot",team:0,lineup:["kv1"],equipment:{kv1:entries}}
+    ]});
+    const P=b.pilots[0], v=b.spawnPlayer("kv1",P);
+    const base = new Vehicle(def,0,0,0,0);
+    assert.equal(v.turnRate(),base.turnRate());
+    assert.ok(v.reloadTime()<base.reloadTime());
+    assert.ok(v.mods.trackL.maxHp>v.mods.trackR.maxHp);
+    const crew=v.seats.driver.occupant;
+    const radio=v.seats.radio.occupant;
+    radio.hp=35; v.update(.01,6);
+    radio.hp=80; crew.hp=12; v.update(.01,7);
+    assert.equal(crew.hp,crew.maxHp); assert.equal(radio.hp,35);
+    crew.hp=12; v.update(.01,8); assert.equal(crew.hp,12);
+    assert.ok(v.useMedkit()); assert.equal(crew.hp,67);
+    v.mods.trackL.hp=1; assert.ok(v.startRepair());
+    v.updateRepair(v.repair.dur); assert.equal(v.mods.trackL.hp,v.mods.trackL.maxHp*.6);
+    const info=Room.prototype.spawnInfo(v);
+    const replica = new NetBattle({b:{mode:"duel",mapId:"prokhorovka",nations:["ussr","germany"],seed:b.seed},
+        me:{pid:"p",name:"Pilot",team:0,nation:"ussr",lineup:["kv1"]},full:{tm:1,veh:[info],wc:[],pts:[]}}, {});
+    applyOwn(replica.player,packOwn(v));
+    assert.equal(replica.player.mods.trackL.maxHp,v.mods.trackL.maxHp);
+    assert.equal(replica.player.turnRate(),v.turnRate());
+    assert.equal(replica.player.reloadTime(),v.reloadTime());
+});

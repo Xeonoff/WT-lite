@@ -2,6 +2,7 @@ import { Config } from "./core/Config.js";
 import { Events } from "./core/Events.js";
 import { Settings } from "./core/Settings.js";
 import { Profile } from "./core/Profile.js";
+import { cardFor } from "./data/ArchiveCards.js";
 import { Input } from "./core/Input.js";
 import { $, clamp, angDiff } from "./core/Utils.js";
 import { SHELLS } from "./data/Shells.js";
@@ -90,7 +91,7 @@ export class Game {
         setTimeout(() => {
             try {
                 this.endBattleCleanup();
-                this.battle = new Battle(opts);
+                this.battle = new Battle({ ...opts, equipment: Profile.equipment() });
                 this.scene3d.loadBattle(this.battle);
                 this.hud.battle = this.battle;
                 this.hud.mmStatic = null;
@@ -148,7 +149,7 @@ export class Game {
 
     showTips(b) {
         const tips = [
-            "Наведите прицел на деталь противника: <b>зелёный</b> — пробьёте, <b>жёлтый</b> — на грани, <b>красный</b> — нет.",
+            "Кольцо показывает, куда направлен ствол. На броне его цвет показывает шанс пробития: <b>зелёный</b> — высокий, <b>жёлтый</b> — средний, <b>красный</b> — низкий.",
             "Ставьте корпус <b>ромбом</b> (25–35° к врагу) — приведённая броня растёт. Наклонные листы и так толще своей толщины.",
             "<b>R</b> — ремонт (сбитая гусеница, орудие), <b>F</b> — тушить пожар, <b>T</b> — аптечка экипажу.",
             "<b>ПКМ</b> — бинокль, <b>колесо</b> — масштаб, <b>B</b> — артудар по точке под курсором.",
@@ -159,11 +160,20 @@ export class Game {
     pause() {
         if (this.state !== "battle" || this.paused) return;
         this.paused = true;
+        this.input.resetPointer();
+        this.releaseLock();
+        if (this.battle.net) {
+            const p = this.battle.player;
+            if (p) p.input.throttle = p.input.steer = 0;
+            this.battle.fireHeld = false;
+            this.battle.sendInput();
+        }
         $("pChange").classList.toggle("hidden", this.battle.mode !== "range");
         $("pauseSub").textContent = this.battle.net ? "онлайн-бой продолжается — машина стоит" : "бой остановлен";
         $("pauseScr").classList.remove("hidden");
     }
     resume() {
+        this.input.resetPointer();
         this.paused = false;
         $("pauseScr").classList.add("hidden");
         this.screens.closeModal();
@@ -432,10 +442,16 @@ export class Game {
     bindLook() {
         const gl = $("gl");
         document.addEventListener("pointerlockchange", () => {
-            if (document.pointerLockElement) return;
-            this.unlockAt = performance.now();
+            if (document.pointerLockElement === gl) {
+                this.input.mouse.overUI = false;
+                if (!this.lookWanted()) this.releaseLock();
+                return;
+            }
             // захват снял браузер (Esc) — как в играх, открываем паузу
-            if (!this.ourUnlock && this.state === "battle" && this.battle && !this.battle.ended && !this.paused && !this.screens.modalOpen) this.pause();
+            if (!this.ourUnlock && this.lookWanted()) {
+                this.unlockAt = performance.now();
+                this.pause();
+            }
             this.ourUnlock = false;
         });
         document.addEventListener("pointerlockerror", () => {
@@ -444,16 +460,17 @@ export class Game {
                 this.hud.log("Вид сзади: щёлкните мышью, чтобы обзор следовал за мышью", "tip", 6000);
             }
         });
-        // первое нажатие в виде сзади без захвата только захватывает мышь (кроме ПКМ — прицел)
+        // Клик по полю одновременно возвращает захват и выполняет игровое действие.
         this.input.onDown = (e) => {
             // наблюдение: ЛКМ / ПКМ — следующий / предыдущий союзник
             if (this.spec && this.state === "battle" && !this.paused && !this.screens.modalOpen) {
                 if (e.button === 0 || e.button === 2) this.specCycle(e.button === 0 ? 1 : -1);
                 return true;
             }
-            if (!this.lookWanted() || document.pointerLockElement === gl) return false;
-            this.requestLock();
-            return e.button === 0;
+            if (this.state !== "battle" || this.paused || this.screens.modalOpen || !$("spawnScr").classList.contains("hidden")) return true;
+            if (!this.battle.player || this.battle.player.dead || this.battle.ended) return true;
+            if (this.lookWanted() && document.pointerLockElement !== gl) this.requestLock();
+            return false;
         };
     }
 
@@ -665,14 +682,15 @@ export class Game {
         p.input.throttle = thr;
         p.input.steer = steer;
         p.aimPoint = this.aim.point;
-        if (!blocked && I.mouse.left && !I.mouse.overUI) b.fire(p);
+        if (!blocked && !I.mouse.overUI && (I.mouse.left || I.mouse.pressed)) b.fire(p);
+        I.mouse.pressed = false;
     }
 
     /** Точка прицеливания: деталь под курсором → центр её высоты; иначе — направление на землю */
     computeAim(dt) {
         const b = this.battle, p = b && b.player;
         const aim = this.aim;
-        if (!p || p.dead) { aim.point = null; aim.pen = null; aim.block = null; return; }
+        if (!p || p.dead) { aim.cursor = aim.point = aim.pen = aim.block = aim.gunRange = null; return; }
         const m = this.aimScreen();
         const tp = this.camTs > 0.5;
         const ray = this.scene3d.screenRay(m.x, m.y);
@@ -728,67 +746,31 @@ export class Game {
                 aim.dist = dd;
                 aim.ground = gp;
                 aim.cursor = gp;
-            }
+            } else { aim.cursor = aim.ground = aim.point = null; aim.dist = 0; }
         }
-        // индикатор пробития и препятствий на линии огня (10 раз в секунду)
+        // Прогноз для маркера орудия строим по тому же лучу, по которому полетит выстрел.
         aim.penT -= dt;
-        if (aim.penT <= 0) {
-            aim.penT = 0.1;
-            aim.pen = null;
-            aim.block = this.probeBlock(p, mz);
-            const t = aim.target;
-            if (t && !t.dead && t.team !== p.team && aim.point) {
-                const s = SHELLS[p.shell];
-                const dx = aim.point[0] - mz[0], dy = aim.point[1] - mz[1], dz = aim.point[2] - mz[2];
-                const L = Math.hypot(dx, dy, dz) || 1;
-                // сначала — по фактической линии ствола: так полетит снаряд, если выстрелить сейчас;
-                // пока орудие не довернулось на цель — оценка точки под курсором
-                p.aimPoint = aim.point;
-                let tr = traceShot(s, t, mz, b.fireLine(p).dir, L + 10, L);
-                let aligned = true;
-                if (!tr.main && !tr.layers.length) {
-                    tr = traceShot(s, t, mz, [dx / L, dy / L, dz / L], L + 10, L);
-                    aligned = false;
-                }
-                if (tr.main) {
-                    const ev = tr.main.ev;
-                    if (s.type === "HE") aim.pen = { he: true, ok: tr.pen >= ev.eff, eff: ev.eff, pen: tr.pen, plate: ev.info.name, angle: ev.theta, aligned };
-                    else aim.pen = { pen: tr.pen, eff: ev.eff, rico: ev.ricoP, plate: ev.info.name, angle: ev.theta, aligned };
-                } else if (tr.layers.length) aim.pen = { pen: tr.pen, eff: 999, rico: 0, plate: tr.layers[0].ev.info.name, blocked: false, aligned };
-            }
-            if (aim.block && aim.pen) aim.pen.blocked = true;
+        if (aim.penT > 0) return;
+        aim.penT = 0.08;
+        aim.pen = aim.block = null;
+        aim.gunRange = null;
+        const cursor = aim.cursor;
+        if (!cursor) return;
+        const { m: origin, dir } = b.fireLine(p);
+        const reach = Math.max(4, Math.hypot(cursor[0] - origin[0], cursor[1] - origin[1], cursor[2] - origin[2]));
+        const hit = probeShot(b, p, origin, dir, reach + 2);
+        if (!hit) return;
+        if (hit.kind === "vehicle" && hit.v.team !== p.team && !hit.v.visible[p.team]) return;
+        aim.gunRange = hit.t;
+        if (hit.kind === "vehicle" && hit.v.team !== p.team) {
+            const shell = SHELLS[p.shell];
+            const tr = traceShot(shell, hit.v, origin, dir, hit.t + 2 * hit.v.def.radius, hit.t);
+            const plate = tr.main || tr.layers.at(-1);
+            if (plate) aim.pen = { pen: tr.pen, eff: plate.ev.eff, plate: plate.ev.info.name,
+                angle: plate.ev.theta, rico: plate.ev.ricoP, screen: !tr.main };
+        } else if (hit.kind !== "ground" || hit.t < reach * (aim.target ? 0.9 : 0.85)) {
+            aim.block = { what: { vehicle: "Союзник", ground: "Склон", building: "Здание", wreck: "Остов", rock: "Скала" }[hit.kind] || "Преграда" };
         }
-    }
-
-    /**
-     * Препятствие между дульным срезом и точкой прицеливания: выстрел пускается
-     * тем же направлением, что и в Battle.fire (с ограничением угла места).
-     */
-    probeBlock(p, mz) {
-        const aim = this.aim;
-        const goal = aim.target ? aim.cursor : aim.cursor || aim.point;
-        if (!aim.point || !goal) return null;
-        const dx = aim.point[0] - mz[0], dz = aim.point[2] - mz[2];
-        const hd = Math.hypot(dx, dz);
-        if (hd < 6) return null;
-        // направление на точку прицеливания; если орудие упрётся в углы наводки — с поправкой на недостающий угол
-        const b = this.battle;
-        const pitch = Math.atan2(aim.point[1] - mz[1], hd) + (b.wantPitch(p) - b.wantPitchRaw(p));
-        const dir = [Math.cos(pitch) * dx / hd, Math.sin(pitch), Math.cos(pitch) * dz / hd];
-        const want = Math.hypot(goal[0] - mz[0], goal[2] - mz[2]) / Math.cos(pitch);
-        const hit = probeShot(this.battle, p, mz, dir, want + 3);
-        if (!hit || hit.t > want - 1.5) return null;
-        let what;
-        if (hit.kind === "vehicle") {
-            if (hit.v === aim.target || hit.v.team !== p.team) return null;
-            what = "союзник";
-        } else if (hit.kind === "ground") {
-            // по земле у цели — не препятствие: выстрел просто уходит в грунт за ней; гребень на пути — препятствие
-            if (hit.t > want * (aim.target ? 0.9 : 0.85)) return null;
-            what = aim.target ? "грунт" : "склон";
-        } else if (hit.kind === "wreck" && hit.o.v === aim.target) return null;
-        else what = { building: "здание", wreck: "подбитая машина", rock: "скала" }[hit.kind] || "препятствие";
-        return { point: hit.point, what, dist: hit.t };
     }
 
     /* ─────────── События → обратная связь ─────────── */
@@ -884,6 +866,11 @@ export class Game {
         });
         Events.on("repairStart", (e) => { if (isP(e.v)) { this.hud.log(`Ремонт: ${e.dur.toFixed(0)} с. Машина неподвижна`, "warn"); this.audio.repairTick(); } });
         Events.on("repairDone", (e) => { if (isP(e.v)) this.hud.log("Ремонт завершён", "good"); });
+        Events.on("archiveProc", ({v,id}) => {
+            if (!isP(v)) return;
+            const item = v.equipment.find(i => i.id === id);
+            if (item) this.hud.log("Архив · " + cardFor(item).name, "good");
+        });
         Events.on("medkit", (e) => { if (isP(e.v)) this.hud.log("Аптечка: вылечено " + e.healed, "good"); });
         Events.on("reloaded", (e) => { if (isP(e.v)) this.audio.reloadDone(); });
         Events.on("resupply", (e) => {
@@ -935,6 +922,7 @@ export class Game {
         Events.on("waveClear", (e) => { this.hud.banner("ВОЛНА " + e.n + " ОТБИТА", "полевой ремонт и пополнение"); this.audio.ui("good"); });
         Events.on("playerSpawn", (e) => { const b = B(); if (b && b.net && e.v === b.player) this.afterSpawn(e.v); });
         Events.on("battleEnd", (r) => {
+            if (r.drop) Profile.receiveCase(r.drop, r.rewardId);
             this.hud.banner(r.draw ? "НИЧЬЯ" : r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ", r.reason, r.draw ? "" : r.win ? "win" : "lose");
             this.audio.ui(r.win ? "good" : "bad");
             setTimeout(() => { if (this.battle && this.battle.result === r) this.finishBattle(r); }, 3200);

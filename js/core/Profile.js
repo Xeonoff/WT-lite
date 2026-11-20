@@ -1,6 +1,8 @@
 import { Settings } from "./Settings.js";
 import { Events } from "./Events.js";
 import { ALL_VEHICLES, getVehicle } from "../data/VehicleBuild.js";
+import { CASES, rollItem, slotTarget } from "../data/Archive.js";
+import { CARD_POOLS, cardFor } from "../data/ArchiveCards.js";
 
 const KEY = "wtl_profile_v2";
 export const RESEARCH_COST = { 1: 0, 2: 1800, 3: 4200 };
@@ -16,6 +18,7 @@ function defaults() {
         lineup,
         nation: "ussr",
         bestWave: 0,
+        archive: [],
         stats: { battles: 0, wins: 0, kills: 0, deaths: 0 },
         lastMode: "domination",
         lastMap: "random",
@@ -28,6 +31,19 @@ function load() {
         const raw = localStorage.getItem(KEY);
         if (raw) {
             const d = { ...defaults(), ...JSON.parse(raw) };
+            if (!Array.isArray(d.archive)) d.archive = [];
+            let migrated = false;
+            for (const item of d.archive) {
+                if (item.tier === null) continue;
+                const pool = CARD_POOLS[item.target]?.[item.tier];
+                if (pool && !cardFor(item)) {
+                    item.card = pool[(item.id - 1) % pool.length].id;
+                    migrated = true;
+                }
+            }
+            if (migrated) {
+                try { localStorage.setItem(KEY, JSON.stringify(d)); } catch { /* доступен в памяти до следующего сохранения */ }
+            }
             d.lineup.ussr = (d.lineup.ussr || []).filter((id) => getVehicle(id));
             d.lineup.germany = (d.lineup.germany || []).filter((id) => getVehicle(id));
             return d;
@@ -40,6 +56,44 @@ const data = load();
 
 export const Profile = {
     data,
+    receiveCase(kind, source) {
+        if (!Object.hasOwn(CASES, kind) || !source || data.archive.some(i => i.source === source)) return false;
+        const id = (data.archive.at(-1)?.id || 0) + 1;
+        data.archive.push({ id, kind, source, tier: null, vehicle: null, slot: null });
+        this.save();
+        return true;
+    },
+    openCase(id) {
+        const item = data.archive.find(i => i.id === id);
+        if (!item || item.tier !== null) return null;
+        Object.assign(item, rollItem(item.kind));
+        this.save();
+        return item;
+    },
+    assignItem(id, vehicle, slot) {
+        const item = data.archive.find(i => i.id === id);
+        const def = getVehicle(vehicle);
+        if (!item || item.tier === null || !def || !this.isResearched(vehicle) ||
+            slotTarget(def, item.kind, slot) !== item.target) return false;
+        if (data.archive.some(i => i !== item && i.kind === item.kind && i.vehicle === vehicle && i.slot === slot)) return false;
+        Object.assign(item, { vehicle, slot });
+        this.save();
+        return true;
+    },
+    unassignItem(id) {
+        const item = data.archive.find(i => i.id === id);
+        if (!item?.vehicle) return false;
+        Object.assign(item, { vehicle: null, slot: null });
+        this.save();
+        return true;
+    },
+    equipment() {
+        const byVehicle = {};
+        for (const { id, vehicle, kind, target, tier, slot, card } of data.archive) {
+            if (vehicle && this.isResearched(vehicle)) (byVehicle[vehicle] ??= []).push({ id, kind, target, tier, slot, card });
+        }
+        return byVehicle;
+    },
     save() {
         try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
         Events.emit("profile");

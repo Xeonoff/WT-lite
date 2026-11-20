@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/hud.css">
     <link rel="stylesheet" href="./css/screens.css">
+    <link rel="stylesheet" href="./css/archive.css">
     <script type="importmap">{ "imports": { "three": "./js/vendor/three.module.js" } }</script>
 </head>
 
@@ -82,12 +83,21 @@
     <div id="menu" class="screen">
         <div class="mcol">
             <div class="brand">
-                <span class="chip">ТАНКОВЫЙ БОЙ · МОДУЛЬНЫЙ УРОН · РЕНТГЕН</span>
                 <h1 class="logo">WT <em>LITE</em></h1>
+                <nav class="menuTools" aria-label="Меню">
+                    <button class="ghost" data-act="ref">Справочник</button>
+                    <button class="ghost" data-act="settings">Настройки</button>
+                </nav>
             </div>
             <div id="profChips"></div>
             <h3 class="sh">РЕЖИМ</h3>
-            <div id="modeCards"></div>
+            <div class="missionBoard">
+                <div id="modeCards" role="group" aria-label="Режим боя"></div>
+                <div class="missionBrief">
+                    <canvas id="missionMap" width="560" height="156" aria-hidden="true"></canvas>
+                    <div id="modeBrief" class="scrollable" tabindex="0"></div>
+                </div>
+            </div>
             <div class="mrow">
                 <label class="mapl">КАРТА <select id="mapSel"></select></label>
                 <label class="mapl">ПОГОДА <select id="wxSel"></select></label>
@@ -99,10 +109,9 @@
                 <button class="big" data-act="play">В БОЙ ▸</button>
                 <button class="big alt" data-act="online">ОНЛАЙН</button>
                 <button class="ghost" data-act="hangar">АНГАР</button>
-                <button class="ghost" data-act="ref">СПРАВОЧНИК</button>
-                <button class="ghost" data-act="settings">НАСТРОЙКИ</button>
             </div>
         </div>
+        <div id="menuVehicle"></div>
     </div>
 
     <!-- ═══════════════ АНГАР ═══════════════ -->
@@ -110,6 +119,7 @@
         <div class="hTop">
             <button class="ghost" id="hBackBtn" data-act="hBack">◂ МЕНЮ</button>
             <div id="hNations"></div>
+            <div id="archiveButtons"></div>
         </div>
         <div class="hBody">
             <div id="tree" class="panel scrollable"></div>
@@ -126,6 +136,12 @@
             <div id="hDetail" class="panel scrollable"></div>
         </div>
         <div id="hLineup" class="panel"></div>
+    </div>
+    <div id="archiveScr" class="screen modal hidden" role="dialog" aria-modal="true" aria-labelledby="archiveTitle">
+        <div class="archivePanel panel">
+            <header><h2 id="archiveTitle">Архив ангара</h2><button class="ghost" data-act="closeModal">В ангар ▸</button></header>
+            <div id="archiveBody"></div>
+        </div>
     </div>
 
     <!-- ═══════════════ ОНЛАЙН ═══════════════ -->
@@ -221,6 +237,7 @@
             <div class="sub" id="resReason"></div>
             <div id="resStats"></div>
             <div id="resRP"></div>
+            <div id="resArchive" class="hidden"></div>
             <div class="btnrow">
                 <button class="big" data-act="again" id="resAgain">ЕЩЁ БОЙ ▸</button>
                 <button class="ghost" data-act="toHangar">В АНГАР</button>

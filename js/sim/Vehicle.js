@@ -2,6 +2,7 @@ import { Config } from "../core/Config.js";
 import { Events } from "../core/Events.js";
 import { DEG, clamp, uid, rnd } from "../core/Utils.js";
 import { SHELLS } from "../data/Shells.js";
+import { installCards, statFactor, cardEvent, rackLoss } from "./ArchiveEffects.js";
 
 /** Состояние модуля: 0 — исправен, 1 — повреждён, 2 — критически, 3 — уничтожен */
 export function modState(m) {
@@ -50,6 +51,8 @@ export class Vehicle {
             this.seats[s] = { name: s, occupant: member, def: def.seats[s] };
         }
         this.swap = null;
+        this.equipment = opts.equipment || [];
+        this.cards = this.equipment.length ? installCards(this,this.equipment) : null;
 
         this.ammo = {};
         for (const [sid, n] of def.shells) this.ammo[sid] = n;
@@ -102,6 +105,7 @@ export class Vehicle {
         return 0.5 + 0.5 * this.seatHp(name);
     }
     aliveCrew() { return this.crew.reduce((n, c) => n + (c.alive ? 1 : 0), 0); }
+    cardFactor(stat) { return statFactor(this, stat); }
     hasSeat(name) { return !!this.seats[name]; }
 
     /* ─────────── Подвижность ─────────── */
@@ -123,24 +127,24 @@ export class Vehicle {
         if (!this.canDrive()) return 0;
         let f = SPEED_F[this.st("engine")] * TRANS_F[this.st("transmission")];
         if (this.fire) f *= 0.85;
-        return (this.def.mob.speed / 3.6) * f;
+        return (this.def.mob.speed / 3.6) * f * this.cardFactor("speed");
     }
     maxReverse() {
         if (this.boss) return this.boss.maxReverse();
         if (!this.canDrive()) return 0;
         const f = SPEED_F[this.st("engine")] * (this.st("transmission") >= 2 ? 0.4 : 1);
-        return (this.def.mob.reverse / 3.6) * f;
+        return (this.def.mob.reverse / 3.6) * f * this.cardFactor("reverse");
     }
     accel() {
         if (this.boss) return this.boss.accel();
         const pw = this.def.mob.pw;
-        return clamp(0.8 + pw * 0.085, 1.3, 4.2) * SPEED_F[this.st("engine")] * (0.6 + 0.4 * this.crewEff("driver"));
+        return clamp(0.8 + pw * 0.085, 1.3, 4.2) * SPEED_F[this.st("engine")] * (0.6 + 0.4 * this.crewEff("driver")) * this.cardFactor("accel");
     }
     /** Скорость поворота корпуса: ранение мехвода замедляет поворот */
     turnRate() {
         if (this.boss) return this.boss.turnRate();
         if (!this.canDrive()) return 0;
-        const drv = this.crewEff("driver");
+        const drv = this.crewEff("driver") * this.cardFactor("turn");
         return this.def.mob.hull * 1.15 * DEG * drv * [1, 0.9, 0.7, 0][this.st("transmission")] * (this.st("engine") >= 2 ? 0.75 : 1);
     }
     /** Скорость наводки башни / орудия в рубке */
@@ -151,7 +155,7 @@ export class Vehicle {
         let f = 0.6 + 0.4 * this.seatHp("gunner");
         if (this.mods.drive) f *= DRIVE_F[this.st("drive")];
         if (this.hasSeat("commander") && !this.seatOk("commander")) f *= 0.9;
-        return this.def.mob.turret * 1.5 * DEG * f;
+        return this.def.mob.turret * 1.5 * DEG * f * this.cardFactor("traverse");
     }
 
     /* ─────────── Орудие ─────────── */
@@ -177,7 +181,7 @@ export class Vehicle {
         m *= RACK_RELOAD[worst];
         m *= BREECH_RELOAD[this.st("breech")];
         const base = g.reload * (sid && SHELLS[sid].type === "APCR" ? 1.0 : 1);
-        return base * m;
+        return base * m * this.cardFactor("reload");
     }
     reloadBreakdown() {
         const out = [];
@@ -196,7 +200,7 @@ export class Vehicle {
     elevRate() {
         if (this.boss) return this.boss.elevRate();
         if (this.dead || !this.seatOk("gunner")) return 0;
-        return this.def.gun.elevRate * DEG * (0.6 + 0.4 * this.seatHp("gunner"));
+        return this.def.gun.elevRate * DEG * (0.6 + 0.4 * this.seatHp("gunner")) * this.cardFactor("elevate");
     }
 
     /** Разброс орудия убран: снаряд летит строго по оси ствола (метод оставлен для совместимости) */
@@ -274,6 +278,9 @@ export class Vehicle {
             this.reloadTotal = this.reloadTime(this.shell);
             this.reload = this.reloadTotal;
         }
+        const lastOfType = sid === this.shell && !this.ammo[sid];
+        cardEvent(this,"shot");
+        if (lastOfType) cardEvent(this,"lastRound");
         return sid;
     }
 
@@ -296,13 +303,13 @@ export class Vehicle {
     /** Боекомплект из уничтоженного стеллажа теряется */
     loseRack(id) {
         const fills = this.rackFills();
-        const lost = fills[id] || 0;
+        const lost = rackLoss(this,id,fills[id] || 0);
         this.racksLost[id] = true;
         if (lost <= 0) return 0;
         const total = this.totalAmmo();
         let toRemove = lost;
         for (const k in this.ammo) {
-            const take = Math.min(this.ammo[k], Math.round((this.ammo[k] / total) * lost));
+            const take = Math.min(toRemove, this.ammo[k], Math.round((this.ammo[k] / total) * lost));
             this.ammo[k] -= take;
             toRemove -= take;
         }
@@ -328,6 +335,10 @@ export class Vehicle {
     /* ─────────── Обновление внутренних систем ─────────── */
     update(dt, now) {
         if (this.dead) return;
+        if (this.cards) {
+            this.cardTime = now;
+            cardEvent(this,"critical");
+        }
         this.updateReload(dt);
         this.updateCrewSwap(dt);
         this.updateRepair(dt);
@@ -399,7 +410,7 @@ export class Vehicle {
                 ds.occupant = null;
                 member.transit = true;
                 const cross = ds.def.frame !== s.def.frame;
-                const dur = cross ? Config.CREW.SWAP_CROSS : Config.CREW.SWAP_HULL;
+                const dur = (cross ? Config.CREW.SWAP_CROSS : Config.CREW.SWAP_HULL) * this.cardFactor("swap");
                 this.swap = { member, from: dn, to: need, t: 0, dur };
                 Events.emit("crewSwap", { v: this, member, from: dn, to: need, dur });
                 return;
@@ -425,9 +436,9 @@ export class Vehicle {
         for (const m of list) (modState(m) >= 2 ? crit++ : dmg++);
         const missing = this.crew.length - this.aliveCrew();
         const dur = (Config.REPAIR.BASE + crit * Config.REPAIR.PER_CRIT + dmg * Config.REPAIR.PER_DMG) * (1 + 0.22 * missing);
-        this.repair = { t: 0, dur };
+        this.repair = { t: 0, dur: dur * this.cardFactor("repair") };
         this.v *= 0.3;
-        Events.emit("repairStart", { v: this, dur });
+        Events.emit("repairStart", { v: this, dur:this.repair.dur });
         return true;
     }
     cancelRepair() {
@@ -440,10 +451,12 @@ export class Vehicle {
         this.repair.t += dt;
         if (this.repair.t >= this.repair.dur) {
             for (const m of this.repairList()) {
-                m.hp = m.maxHp * (m.type === "track" ? 0.6 : Config.REPAIR.RESTORE_TO);
+                const restored = m.type === "track" ? 0.6 : Config.REPAIR.RESTORE_TO;
+                m.hp = m.maxHp * restored;
                 if (m.type === "ammo") delete this.racksLost[m.id];
             }
             this.repair = null;
+            cardEvent(this,"repair");
             Events.emit("repairDone", { v: this });
         }
     }
@@ -452,6 +465,7 @@ export class Vehicle {
         if (!this.fire || this.ext <= 0 || this.dead) return false;
         this.ext--;
         this.fire = null;
+        cardEvent(this,"ext");
         Events.emit("fireOut", { v: this, ext: true });
         return true;
     }
@@ -464,6 +478,7 @@ export class Vehicle {
         }
         if (!healed) return false;
         this.medkits--;
+        cardEvent(this,"medkit");
         Events.emit("medkit", { v: this, healed });
         return true;
     }
@@ -504,10 +519,11 @@ export class Vehicle {
         for (const s of this.def.crew) {
             const seat = this.seats[s];
             if (seat.occupant && seat.occupant.alive) continue;
-            const member = { home: s, seat: s, hp: Config.CREW.HP, maxHp: Config.CREW.HP, alive: true, transit: false };
             let idx = seat.occupant ? this.crew.indexOf(seat.occupant) : -1;
             if (idx < 0) idx = this.crew.findIndex((c) => !c.alive && !seated(c));
-            if (idx >= 0) this.crew[idx] = member; else this.crew.push(member);
+            const member = this.crew[idx] || { home: s, maxHp: Config.CREW.HP };
+            Object.assign(member, { seat: s, hp: member.maxHp, alive: true, transit: false });
+            if (idx < 0) this.crew.push(member);
             seat.occupant = member;
             return s;
         }

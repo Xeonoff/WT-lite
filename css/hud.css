@@ -388,3 +388,52 @@
 .chl b.e { color: var(--enemy); }
 .chl.fade { opacity: 0; }
 #chatIn { pointer-events: auto; }
+
+/* Боевые приборы сгруппированы у кромок экрана. */
+#hud .panel { border-radius: 2px; box-shadow: 0 3px 12px #0005; border-top: 2px solid #a5ad927a; }
+#modePanel { padding: 5px 12px 7px; gap: 9px; border-top: 0; }
+#modePanel .bar, #modePanel .bbar, #rBar, #rFill { border-radius: 0; }
+#modePanel .pt { width: 23px; height: 23px; border-radius: 1px; font-size: 12px; }
+#modePanel .tk b, #modePanel .timer, #rTime, #speed b, #spBadge { font-family: var(--font-readout); }
+#modePanel .winfo { font-size: 11px; }
+#spotted, .fitem, .litem, .alert, .cons, .mod, #modePanel .bs, .shell, .shell .key, .crew, .chl { border-radius: 1px; }
+#leftCol { left: 10px; bottom: 10px; width: clamp(218px,20vw,266px); }
+#vpanel { width: 100%; padding: 7px 9px; }
+.vph { padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+#schemeCv { width: 100%; height: auto; max-height: 98px; object-fit: contain; }
+.grp { color: var(--dim); letter-spacing: .14em; }
+.cons .key, .shell .key { border-radius: 1px; font-family: var(--font-readout); }
+#feed { top: 8px; right: 10px; width: min(31vw,330px); }
+.fitem, .litem, .chl { padding: 3px 7px; font-size: 11.5px; }
+#weapon { bottom: 10px; gap: 4px; width: clamp(305px,33vw,460px); }
+#reload { width: 100%; padding: 6px 8px; }
+#rBar { height: 4px; }
+#shells { gap: 3px; width: 100%; justify-content: center; }
+.shell { width: auto; flex: 1 1 0; min-width: 0; padding: 5px 6px; border-top: 2px solid #6c796c; }
+.shell.active { box-shadow: inset 0 2px var(--accent); background: #363022ee; transform: translateY(-2px); }
+#mmWrap { right: 10px; bottom: 10px; padding: 4px; }
+#minimap { width: clamp(148px,15vw,208px); height: auto; border-radius: 0; }
+#hints { bottom: calc(clamp(148px,15vw,208px) + 44px); right: 10px; width: clamp(160px,16vw,222px); }
+#xray { width: clamp(290px,29vw,420px); top: 21%; right: 10px; }
+#xrCv { width: calc(100% - 12px); height: auto; margin: 0 6px; }
+#xrTitle { font-size: 15px; }
+#xrSub { font-size: 11px; line-height: 1.35; }
+#scoreboard { gap: 10px; max-width: 96vw; overflow: auto; }
+.sbcol table { min-width: min(275px,42vw); }
+@media (max-width: 790px) {
+    #leftCol { width: 185px; }
+    #weapon { width: 30vw; min-width: 205px; }
+    #minimap { width: 132px; }
+    #modePanel .bar { width: 65px; }
+    #schemeCv { max-height: 65px; }
+    #vpanel { padding: 5px; }
+}
+@media (max-width: 560px) {
+    #weapon { width: 60vw; min-width: 0; transform: none; left: 5px; bottom: 5px; }
+    #leftCol { left: 5px; bottom: 115px; width: 154px; }
+    #mmWrap { right: 5px; bottom: 5px; }
+    #minimap { width: 25vw; }
+    #modePanel { width: max-content; max-width: 98vw; gap: 4px; }
+    #modePanel .boss { min-width: 0; }
+    #xray { top: 15%; width: 55vw; }
+}

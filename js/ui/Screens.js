@@ -14,6 +14,10 @@ import { defaultServerUrl, normalizeServerUrl } from "../net/NetClient.js";
 import { MODULE_CATEGORIES as KV1_CATEGORIES, CREW_ROLES as KV1_CREW } from "../data/models/KV1Spec.js";
 import { MODULE_CATEGORIES as RATTE_CATEGORIES, CREW_ROLES as RATTE_CREW, SPEC_ROWS as RATTE_ROWS } from "../data/models/RatteSpec.js";
 import { BOSSES } from "../data/Vehicles.js";
+import { drawMissionMap } from "./MissionMap.js";
+import { ArchiveView, archiveButtons } from "./ArchiveView.js";
+import { CASES } from "../data/Archive.js";
+import { archiveArt } from "./ArchiveArt.js";
 
 /** Легенда режима «Модули» для машин с детальной моделью */
 const DETAILED_LEGEND = { kv1: { cats: KV1_CATEGORIES, crew: KV1_CREW }, ratte: { cats: RATTE_CATEGORIES, crew: RATTE_CREW } };
@@ -30,6 +34,10 @@ export class Screens {
         this.hangarSel = null;
         this.hangarNation = Profile.data.nation;
         this.modal = [];
+        this.archive = new ArchiveView($("archiveBody"), () => {
+            $("archiveButtons").innerHTML = archiveButtons();
+            this.olPushLineups();
+        });
         this.hMode = "model";
         this.ol = { rooms: [], room: null, chat: [], filled: false };
         this.bindStatic();
@@ -39,6 +47,7 @@ export class Screens {
     }
 
     show(id) {
+        if (id !== "hangarScr") this.closeArchive();
         for (const s of SCREENS) if (!["settingsScr", "refScr"].includes(s)) $(s).classList.toggle("hidden", s !== id);
         this.current = id;
         document.body.classList.toggle("inMenu", id === "menu" || id === "hangarScr");
@@ -66,6 +75,7 @@ export class Screens {
         this.show(to);
     }
     hideAll() {
+        this.closeArchive();
         for (const s of SCREENS) if (!["settingsScr", "refScr"].includes(s)) $(s).classList.add("hidden");
         this.current = null;
         document.body.classList.remove("inMenu");
@@ -79,9 +89,19 @@ export class Screens {
     closeModal() {
         const id = this.modal.pop();
         if (id) $(id).classList.add("hidden");
+        if (id === "archiveScr") {
+            $("hangarScr").inert = false;
+            $("archiveButtons").querySelector(`[data-v="${this.archive.kind}"]`)?.focus();
+        }
         return !!id;
     }
     get modalOpen() { return this.modal.length > 0; }
+    closeArchive() {
+        if (!this.modal.includes("archiveScr")) return;
+        this.modal = this.modal.filter(id => id !== "archiveScr");
+        $("archiveScr").classList.add("hidden");
+        $("hangarScr").inert = false;
+    }
 
     click() { this.game.audio.init(); this.game.audio.ui("click"); }
 
@@ -96,6 +116,12 @@ export class Screens {
                 case "play": this.startBattle(); break;
                 case "hangar": this.hangarReturn = null; this.show("hangarScr"); break;
                 case "hBack": this.hangarBack(); break;
+                case "archive":
+                    this.archive.show(this.hangarSel, t.dataset.v);
+                    this.openModal("archiveScr");
+                    $("hangarScr").inert = true;
+                    $("archiveScr").querySelector("[data-act=closeModal]").focus();
+                    break;
                 case "olHangar": this.openOnlineHangar(); break;
                 case "spectate": g.startSpectate(); break;
                 case "specBack": g.stopSpectate(true); break;
@@ -119,7 +145,7 @@ export class Screens {
                 case "testdrive": this.testDrive(t.dataset.v); break;
                 case "spSel": this.spawnSel = t.dataset.v; this.renderSpawn(); break;
                 case "refTab": this.renderRef(t.dataset.v); break;
-                case "resetProgress": if (confirm("Сбросить весь прогресс исследований?")) { Profile.reset(); this.renderSettings(); } break;
+                case "resetProgress": if (confirm("Сбросить прогресс и удалить все контейнеры, личные дела и чертежи?")) { Profile.reset(); this.renderSettings(); } break;
                 case "resetSettings": Settings.reset(); this.renderSettings(); break;
                 case "hMode": this.setHangarMode(t.dataset.v); break;
                 case "online": this.show("onlineScr"); break;
@@ -151,7 +177,11 @@ export class Screens {
             `<span class="chipx ${n.id === nation ? "on" : ""}" data-act="nation" data-v="${n.id}">${n.name} · <b>${d.rp[n.id]}</b> ОИ</span>`).join("") +
             `<span class="chipx stat">боёв <b>${d.stats.battles}</b> · побед <b>${d.stats.wins}</b> · уничтожено <b>${d.stats.kills}</b> · рекорд волн <b>${d.bestWave}</b></span>`;
         $("modeCards").innerHTML = Object.entries(MODES).map(([id, m]) =>
-            `<div class="card mode ${m.boss ? "boss" : ""} ${this.sel.mode === id ? "on" : ""}" data-act="mode" data-v="${id}"><div class="mn">${m.name}</div><div class="ms">${m.short}</div><div class="md">${m.desc}</div></div>`).join("");
+            `<button class="modePick" aria-pressed="${this.sel.mode === id}" data-act="mode" data-v="${id}"><i aria-hidden="true"></i>${m.name}</button>`).join("");
+        const mode = MODES[this.sel.mode];
+        $("modeBrief").innerHTML = `<b>${mode.short}</b><p>${mode.desc}</p>`;
+        $("modeBrief").scrollTop = 0;
+        drawMissionMap($("missionMap"), this.sel.mode);
         const ms = $("mapSel");
         ms.innerHTML = `<option value="random">Случайная карта</option>` + MAP_ORDER.map((id) => `<option value="${id}">${MAPS[id].name} · ${MAPS[id].biome === "summer" ? "лето" : MAPS[id].biome === "winter" ? "зима" : "пустыня"}</option>`).join("");
         ms.value = this.sel.map;
@@ -171,7 +201,10 @@ export class Screens {
         const br = lu.length ? Math.max(...lu.map((id) => getVehicle(id).br)) : 0;
         $("lineupBR").textContent = "Боевой рейтинг сетапа: " + br.toFixed(1) + " · противник: " + NATIONS[nation === "ussr" ? "germany" : "ussr"].name;
         $("mapNote").textContent = this.sel.map === "random" ? "" : MAPS[this.sel.map].desc;
-        this.game.hangar.show(Profile.data.lastVehicle[nation] && Profile.isResearched(Profile.data.lastVehicle[nation]) ? Profile.data.lastVehicle[nation] : lu[0]);
+        const vehicleId = Profile.data.lastVehicle[nation] && Profile.isResearched(Profile.data.lastVehicle[nation]) ? Profile.data.lastVehicle[nation] : lu[0];
+        this.game.hangar.show(vehicleId);
+        const vehicle = getVehicle(vehicleId);
+        $("menuVehicle").innerHTML = vehicle ? `<b>${vehicle.name}</b><span>${NATIONS[nation].name} · ${ROLES[vehicle.role].short} · БР ${vehicle.br.toFixed(1)}</span>` : "";
     }
 
     startBattle() {
@@ -198,6 +231,7 @@ export class Screens {
 
     /* ─────────── Ангар ─────────── */
     renderHangar() {
+        $("archiveButtons").innerHTML = archiveButtons();
         const nation = this.hangarNation;
         const d = Profile.data;
         $("hNations").innerHTML = Object.values(NATIONS).map((n) =>
@@ -390,11 +424,16 @@ export class Screens {
     }
 
     olLineups() { return { ussr: Profile.lineup("ussr"), germany: Profile.lineup("germany") }; }
+    onlineEquipment() {
+        const gear = Profile.equipment();
+        const lineup = Object.values(this.olLineups()).flat();
+        return Object.fromEntries(lineup.filter(id => gear[id]).map(id => [id, gear[id]]));
+    }
 
     /** Сообщить серверу актуальные сетапы обеих наций (для входа в идущий бой) и сетап в комнате */
     olPushLineups() {
         if (!this.game.net.connected) return;
-        this.game.net.send({ t: "lineups", lineups: this.olLineups() });
+        this.game.net.send({ t: "lineups", lineups: this.olLineups(), equipment: this.onlineEquipment() });
         this.olSyncLineup();
     }
 
@@ -425,7 +464,7 @@ export class Screens {
             Profile.data.netToken = Array.from(crypto.getRandomValues(new Uint8Array(12)), (x) => x.toString(16).padStart(2, "0")).join("");
             Profile.save();
         }
-        this.game.net.connect(normalizeServerUrl(raw), name, { token: Profile.data.netToken, lineups: this.olLineups() })
+        this.game.net.connect(normalizeServerUrl(raw), name, { token: Profile.data.netToken, lineups: this.olLineups(), equipment: this.onlineEquipment() })
             .then(() => { this.renderOnline(); })
             .catch((e) => { $("olErr").textContent = "Не удалось подключиться: " + e.message; this.renderOnline(); })
             .finally(() => { $("olConnectBtn").disabled = false; });
@@ -593,6 +632,9 @@ export class Screens {
     /* ─────────── Итоги ─────────── */
     showResults(r, extra) {
         const s = r.stats;
+        const drop = $("resArchive");
+        drop.classList.toggle("hidden", !r.drop);
+        drop.innerHTML = r.drop && Object.hasOwn(CASES,r.drop) ? `<img alt="" src="${archiveArt(r.drop,true)}"><span>Получено в ангар<b>${CASES[r.drop]}</b></span>` : "";
         $("resTitle").textContent = r.draw ? "НИЧЬЯ" : r.win ? "ПОБЕДА" : "ПОРАЖЕНИЕ";
         $("resTitle").className = r.draw ? "" : r.win ? "win" : "lose";
         $("resReason").textContent = r.reason || "";

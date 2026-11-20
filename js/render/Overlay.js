@@ -333,142 +333,69 @@ export class Overlay {
             for (const s of [-1, 1]) for (let i = 1; i <= 3; i++) tri(cx + s * i * 48, cy + 6, 14);
             g.beginPath(); g.moveTo(cx - R * 0.96, cy + 24); g.lineTo(cx - 170, cy + 24); g.moveTo(cx + 170, cy + 24); g.lineTo(cx + R * 0.96, cy + 24); g.stroke();
         }
-        g.font = "700 12px Inter, sans-serif";
-        g.textAlign = "center";
-        g.fillStyle = "rgba(235,238,225,.8)";
-        const T = Config.CAMERA.TP;
-        g.fillText(`×${(T.FOV / T.SIGHT_FOV[game.sightZoom]).toFixed(1).replace(".", ",")} · колесо — кратность`, cx, cy - R + 30);
         g.restore();
     }
 
     crosshair(game, p, sc) {
-        const g = this.g;
-        const m = game.aimScreen();
-        const aim = game.aim;
-        const mx = m.x, my = m.y;
-        // цвет по индикатору пробития
-        let col = COL.grey, info = null;
-        if (aim.pen) {
-            const e = aim.pen;
-            if (e.blocked) col = COL.grey;
-            else if (e.he) col = e.ok ? COL.good : COL.warn;
-            else if (e.pen >= e.eff * 1.1 && e.rico < 0.35) col = COL.good;
-            else if (e.pen >= e.eff * 0.9 && e.rico < 0.8) col = COL.warn;
-            else col = COL.bad;
-            info = e;
+        const g = this.g, aim = game.aim, sight = game.sightOn();
+        const mouse = game.aimScreen();
+        if (!sight) {
+            g.fillStyle = "rgba(0,0,0,.65)";
+            g.beginPath(); g.arc(mouse.x, mouse.y, 2.4, 0, Math.PI * 2); g.fill();
+            g.fillStyle = "#e8e9db";
+            g.beginPath(); g.arc(mouse.x, mouse.y, 1.35, 0, Math.PI * 2); g.fill();
         }
-        const cw = aim.cursor || aim.point;
-        const ppm = cw ? sc.pxPerMeter(cw[0], cw[1], cw[2]) : 4;
-        const rad = 8;
-        const ready = p.canFire();
-        // маркер фактического направления орудия
-        if (cw) {
-            const fl = game.battle.fireLine(p);
-            const L = Math.max(4, Math.hypot(cw[0] - fl.m[0], cw[1] - fl.m[1], cw[2] - fl.m[2]));
-            const [gx, gyy, front] = sc.project(fl.m[0] + fl.dir[0] * L, fl.m[1] + fl.dir[1] * L, fl.m[2] + fl.dir[2] * L);
-            const off = Math.hypot(gx - mx, gyy - my);
-            if (off > 4 && front) {
-                g.strokeStyle = "rgba(255,255,255,.55)";
-                g.lineWidth = 1.5;
-                g.beginPath(); g.arc(gx, gyy, 5, 0, 6.283); g.stroke();
-                g.beginPath(); g.moveTo(gx - 9, gyy); g.lineTo(gx - 5, gyy); g.moveTo(gx + 5, gyy); g.lineTo(gx + 9, gyy); g.stroke();
-            }
+        if (!aim.cursor) return;
+        const { m, dir } = game.battle.fireLine(p);
+        const range = aim.gunRange ?? Math.max(4, Math.hypot(...aim.cursor.map((n, i) => n - m[i])));
+        const [x, y, front] = sc.project(m[0] + dir[0] * range, m[1] + dir[1] * range, m[2] + dir[2] * range);
+        if (!front || x < 0 || y < 0 || x > this.w || y > this.h) return;
+        const pen = aim.pen, block = aim.block, broken = p.gunBroken() || !p.seatOk("gunner");
+        let color = COL.grey;
+        if (broken) color = COL.bad;
+        else if (block) color = "#ff985e";
+        else if (pen) color = pen.screen ? COL.warn : pen.pen >= pen.eff * 1.1 && pen.rico < 0.35 ? COL.good :
+            pen.pen >= pen.eff * 0.9 && pen.rico < 0.8 ? COL.warn : COL.bad;
+        g.save();
+        g.translate(x, y);
+        g.shadowColor = "#101512";
+        g.shadowBlur = 2;
+        g.strokeStyle = color; g.lineWidth = 1.5;
+        g.beginPath(); g.arc(0, 0, 6, 0, Math.PI * 2);
+        g.moveTo(-12, 0); g.lineTo(-8, 0); g.moveTo(8, 0); g.lineTo(12, 0); g.stroke();
+        if (block || broken) {
+            g.beginPath(); g.moveTo(-3, 3); g.lineTo(3, -3); g.stroke();
         }
-        // препятствие на линии огня: крест в точке удара и пунктир до прицела
-        const blk = aim.block;
-        if (blk) {
-            const [bx, by, bf] = sc.project(blk.point[0], blk.point[1], blk.point[2]);
-            if (bf) {
-                g.save();
-                g.strokeStyle = "rgba(255,120,70,.75)";
-                g.lineWidth = 1.4;
-                g.setLineDash([5, 5]);
-                g.beginPath(); g.moveTo(bx, by); g.lineTo(mx, my); g.stroke();
-                g.setLineDash([]);
-                g.fillStyle = "rgba(20,12,8,.55)";
-                g.beginPath(); g.arc(bx, by, 11, 0, 6.283); g.fill();
-                g.strokeStyle = "#ff7846";
-                g.lineWidth = 2.4;
-                g.beginPath(); g.arc(bx, by, 11, 0, 6.283); g.stroke();
-                g.beginPath(); g.moveTo(bx - 5.5, by - 5.5); g.lineTo(bx + 5.5, by + 5.5); g.moveTo(bx + 5.5, by - 5.5); g.lineTo(bx - 5.5, by + 5.5); g.stroke();
-                g.restore();
-            }
+        if (!broken && p.reload > 0) {
+            const progress = 1 - clamp(p.reload / Math.max(0.01, p.reloadTotal), 0, 1);
+            g.lineWidth = 2; g.strokeStyle = COL.warn;
+            g.beginPath(); g.arc(0, 0, 10, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2); g.stroke();
+        } else if (p.canFire()) {
+            g.fillStyle = COL.good; g.fillRect(-2, 9, 4, 2);
         }
-        g.strokeStyle = blk ? "#ff7846" : col;
-        g.lineWidth = 1.8;
-        if (blk) g.setLineDash([6, 4]);
-        g.beginPath(); g.arc(mx, my, rad, 0, 6.283); g.stroke();
-        g.setLineDash([]);
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-            g.beginPath();
-            g.moveTo(mx + dx * (rad + 4), my + dy * (rad + 4));
-            g.lineTo(mx + dx * (rad + 12), my + dy * (rad + 12));
-            g.stroke();
-        }
-        g.fillStyle = col;
-        g.beginPath(); g.arc(mx, my, 1.8, 0, 6.283); g.fill();
-        // перезарядка
-        const rr = rad + 16;
-        if (p.gunBroken() || !p.seatOk("gunner")) {
-            g.strokeStyle = COL.bad;
-            g.lineWidth = 3;
-            g.beginPath(); g.moveTo(mx - 10, my - 10); g.lineTo(mx + 10, my + 10); g.moveTo(mx + 10, my - 10); g.lineTo(mx - 10, my + 10); g.stroke();
-        } else if (!ready && p.reload > 0) {
-            const pr = 1 - clamp(p.reload / Math.max(0.01, p.reloadTotal), 0, 1);
-            g.strokeStyle = "rgba(0,0,0,.35)";
-            g.lineWidth = 3.5;
-            g.beginPath(); g.arc(mx, my, rr, 0, 6.283); g.stroke();
-            g.strokeStyle = "rgba(224,178,62,.95)";
-            g.beginPath(); g.arc(mx, my, rr, -Math.PI / 2, -Math.PI / 2 + pr * 6.283); g.stroke();
-        } else if (ready) {
-            g.strokeStyle = "rgba(98,226,126,.85)";
-            g.lineWidth = 2.5;
-            for (let k = 0; k < 4; k++) {
-                const a0 = -Math.PI / 2 + k * Math.PI / 2 - 0.25;
-                g.beginPath(); g.arc(mx, my, rr, a0, a0 + 0.5); g.stroke();
-            }
-        }
-        // подписи
+        const T = Config.CAMERA.TP;
+        const line = [sight && "×" + (T.FOV / T.SIGHT_FOV[game.sightZoom]).toFixed(1),
+            (aim.gunRange == null ? "≈" : "") + Math.round(range) + " м",
+            broken ? "Орудие недоступно" : block?.what || (p.reload > 0 && p.reload.toFixed(1) + " с")].filter(Boolean).join(" · ");
+        const armor = pen && [pen.plate, pen.screen ? "экран" : Math.round(pen.pen) + "/" + Math.round(pen.eff) + " мм",
+            pen.angle != null && Math.round(pen.angle) + "°", pen.rico >= 0.05 && "↗" + Math.round(100 * pen.rico) + "%"].filter(Boolean).join(" · ");
+        g.font = "600 10px Inter, sans-serif";
         g.textAlign = "center";
-        g.font = "600 11px Inter, sans-serif";
-        let ty = my + rr + 16;
-        if (aim.dist) {
-            g.fillStyle = "rgba(235,238,225,.9)";
-            g.fillText(Math.round(aim.dist) + " м", mx, ty);
-            ty += 14;
+        const width = Math.min(this.w - 8, Math.max(g.measureText(line).width, armor ? g.measureText(armor).width : 0) + 10);
+        const cx = clamp(x, width / 2 + 3, this.w - width / 2 - 3) - x;
+        const h = armor ? 27 : 15, top = y + h + 16 < this.h ? 15 : -15 - h;
+        g.fillStyle = "rgba(10,16,15,.76)"; g.fillRect(cx - width / 2, top, width, h);
+        g.fillStyle = color; g.fillText(line, cx, top + 11);
+        if (armor) g.fillText(armor, cx, top + 23);
+        const hit = this.hitTexts[0];
+        if (hit) {
+            g.globalAlpha = clamp(1.6 - hit.t, 0, 1);
+            g.fillStyle = hit.color; g.font = "700 12px 'Exo 2', sans-serif";
+            const hy = top > 0 ? -17 : 23;
+            g.fillText(hit.text, cx, hy);
+            if (hit.sub) { g.font = "10px Inter, sans-serif"; g.fillText(hit.sub, cx, hy + (top > 0 ? -13 : 13)); }
         }
-        if (blk) {
-            g.fillStyle = "#ff8a5c";
-            g.font = "700 11px Inter, sans-serif";
-            g.fillText("ПРЕПЯТСТВИЕ · " + blk.what + " · " + Math.round(blk.dist) + " м", mx, ty);
-            ty += 13;
-        } else if (info && !info.blocked) {
-            g.fillStyle = col;
-            const t = info.he ? (info.ok ? "фугас: пробьёт " + Math.round(info.eff) + " мм" : "фугас: " + Math.round(info.eff) + " мм брони")
-                : Math.round(info.pen) + " мм ▸ " + Math.round(info.eff) + " мм" + (info.rico >= 0.05 ? " · рикошет " + Math.round(info.rico * 100) + "%" : "");
-            g.fillText(t, mx, ty);
-            ty += 13;
-            g.fillStyle = "rgba(235,238,225,.7)";
-            g.font = "500 10px Inter, sans-serif";
-            g.fillText(info.plate + (info.angle !== undefined ? " · " + Math.round(info.angle) + "°" : "") + (info.aligned === false ? " · орудие наводится" : ""), mx, ty);
-        }
-        // надписи попаданий
-        let hy = my - rr - 14;
-        for (const h of this.hitTexts) {
-            const a = clamp(1.6 - h.t, 0, 1);
-            g.globalAlpha = a;
-            g.font = `800 ${h === this.hitTexts[0] ? 16 : 13}px "Exo 2", sans-serif`;
-            g.fillStyle = "rgba(0,0,0,.6)";
-            g.fillText(h.text, mx + 1, hy + 1 - h.t * 8);
-            g.fillStyle = h.color;
-            g.fillText(h.text, mx, hy - h.t * 8);
-            if (h.sub) {
-                g.font = "500 10px Inter, sans-serif";
-                g.fillText(h.sub, mx, hy + 12 - h.t * 8);
-            }
-            hy -= 26;
-        }
-        g.globalAlpha = 1;
+        g.restore();
     }
 }
 

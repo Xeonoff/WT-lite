@@ -4,6 +4,7 @@
  */
 import { Battle } from "../js/sim/Battle.js";
 import { Brain } from "../js/sim/AI.js";
+import { rollDrop } from "../js/data/Archive.js";
 import { Events } from "../js/core/Events.js";
 import { getVehicle, vehiclesOf } from "../js/data/VehicleBuild.js";
 import { MAPS, MAP_ORDER, WEATHER } from "../js/data/Maps.js";
@@ -24,7 +25,7 @@ const EVENT_NAMES = [
     "spawn", "vehicleRemoved", "playerSpawn", "shot", "hit", "splashDamage", "impact", "explosion", "destroyed",
     "modDestroyed", "collisionDamage", "crewKO", "crewSwap", "crewSwapDone", "fireStart", "fireOut", "repairStart", "repairDone",
     "repairCancel", "medkit", "reloaded", "resupply", "pointChange", "artyCalled", "artyShell", "worldChange", "battleEnd",
-    "bossNote", "bossAim", "pickup",
+    "bossNote", "bossAim", "pickup", "archiveProc",
 ];
 for (const name of EVENT_NAMES) Events.on(name, (e) => { if (current) current.onSimEvent(name, e); });
 
@@ -99,7 +100,7 @@ export class Room {
     /** Пилот в бою: команда и нация (в битве с боссом команда одна, нация — по колонке) */
     pilotOf(m) {
         const boss = this.settings.mode === "boss";
-        return { id: m.client.id, name: m.client.name, team: boss ? 0 : m.team, nation: NATIONS[m.team], lineup: m.lineup };
+        return { id: m.client.id, name: m.client.name, team: boss ? 0 : m.team, nation: NATIONS[m.team], lineup: m.lineup, equipment: m.client.equipment };
     }
 
     add(client) {
@@ -236,7 +237,7 @@ export class Room {
     }
 
     spawnInfo(v) {
-        return { id: v.id, def: v.def.id, team: v.team, cs: v.callsign, pid: v.pilot ? v.pilot.id : null, x: r2(v.x), z: r2(v.z), a: r2(v.a), tr: r2(v.tr), dead: v.dead, cause: v.deathCause, st: !!v.static };
+        return { id: v.id, def: v.def.id, team: v.team, cs: v.callsign, pid: v.pilot ? v.pilot.id : null, equipment: v.equipment.length ? v.equipment : undefined, x: r2(v.x), z: r2(v.z), a: r2(v.a), tr: r2(v.tr), dead: v.dead, cause: v.deathCause, st: !!v.static };
     }
 
     dropPilot(P) {
@@ -368,6 +369,7 @@ export class Room {
         const all = (ev) => this.queueEv(ev, null);
         const owner = (v, ev) => { const m = this.ownerOf(v); if (m) this.queueEv(ev, m); };
         switch (name) {
+            case "archiveProc": owner(e.v, {e:"archive",v:e.v.id,id:e.id}); break;
             case "spawn": all({ e: "spawn", ...this.spawnInfo(e.v) }); break;
             case "vehicleRemoved": all({ e: "rm", id: e.v.id }); break;
             case "playerSpawn": owner(e.v, { e: "pspawn", id: e.v.id }); break;
@@ -483,7 +485,7 @@ export class Room {
             if (!P) continue;
             m.client.send({
                 t: "end",
-                r: { win: r.winner === P.team, draw: r.winner === -1, winner: r.winner, reason: r.reason, mode: r.mode, stats: { ...P.stats }, vstats: P.vstats, pilots: r.pilots.map((p) => ({ name: p.name, team: p.team, kills: p.stats.kills })) },
+                r: { rewardId: r.rewardId, drop: rollDrop(true, r.mode === "boss" && r.winner === P.team, P.spawns), win: r.winner === P.team, draw: r.winner === -1, winner: r.winner, reason: r.reason, mode: r.mode, stats: { ...P.stats }, vstats: P.vstats, pilots: r.pilots.map((p) => ({ name: p.name, team: p.team, kills: p.stats.kills })) },
             });
         }
     }

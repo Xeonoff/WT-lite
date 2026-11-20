@@ -5,7 +5,9 @@ import { SHELLS } from "../data/Shells.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { WEATHER, BIOME_WEATHER } from "../data/Maps.js";
 import { World } from "./World.js";
+import { readLoadout, rollDrop } from "../data/Archive.js";
 import { Vehicle } from "./Vehicle.js";
+import { cardEvent } from "./ArchiveEffects.js";
 import { Brain } from "./AI.js";
 import { driveVehicle, resolveCollisions, settleOnGround } from "./Physics.js";
 import { Shot, updateShots } from "./Projectiles.js";
@@ -57,7 +59,7 @@ export class Battle {
         if (opts.pilots) {
             for (const p of opts.pilots) this.addPilot(p);
             this.local = this.pilots.find((p) => p.local) || null;
-        } else if (opts.lineup) this.local = this.addPilot({ id: "local", name: "Вы", team: 0, lineup: opts.lineup, local: true });
+        } else if (opts.lineup) this.local = this.addPilot({ id: "local", name: "Вы", team: 0, lineup: opts.lineup, equipment: opts.equipment, local: true });
         this.playerTeam = this.local ? this.local.team : opts.viewTeam || 0;
         this.ended = false;
         this.result = null;
@@ -75,7 +77,10 @@ export class Battle {
     }
 
     addPilot(o) {
+        const equipment = {}, used = new Set();
+        for (const id of o.lineup) equipment[id] = readLoadout(getVehicle(id), o.equipment?.[id], used);
         const p = {
+            equipment,
             id: o.id, name: o.name, team: o.team, nation: o.nation || this.teamNation[o.team], local: !!o.local,
             lineup: o.lineup.map((id) => ({ id, used: false, deaths: 0 })),
             sp: 0, spawns: 0, deathAt: -1, stats: freshStats(), vstats: {}, vehicle: null, left: false,
@@ -174,7 +179,7 @@ export class Battle {
         }
         if (P.vehicle && this.mode === "range") this.removeVehicle(P.vehicle);
         const p = this.modeCtl.playerSpawnPoint ? this.modeCtl.playerSpawnPoint(P) : this.spawnPoint(P.team);
-        const v = this.spawnVehicle(id, P.team, p.x, p.z, p.a, { isPlayer: P.local, pilot: P });
+        const v = this.spawnVehicle(id, P.team, p.x, p.z, p.a, { isPlayer: P.local, pilot: P, equipment: P.equipment[id] });
         P.vehicle = v;
         (P.vstats[id] = P.vstats[id] || { spawns: 0, kills: 0 }).spawns++;
         P.spawns++;
@@ -197,12 +202,22 @@ export class Battle {
         for (const v of this.vehicles) if (v.brain && !v.dead) v.brain.update(dt);
         for (const v of this.vehicles) {
             if (v.dead) continue;
+            if (v.cards) { v.cards.startX = v.x; v.cards.startZ = v.z; }
             driveVehicle(v, dt);
             this.aimTurret(v, dt);
             v.update(dt, this.time);
             if (v.fire) fireTick(this, v, dt);
         }
         resolveCollisions(this);
+        for (const v of this.vehicles) {
+            if (!v.cards || v.dead || v.cards.startX === undefined) continue;
+            const dx = v.x - v.cards.startX, dz = v.z - v.cards.startZ;
+            const distance = Math.hypot(dx,dz);
+            if (!distance) continue;
+            cardEvent(v,"travel",distance,this.time);
+            const back = -(dx*Math.cos(v.a) + dz*Math.sin(v.a));
+            if (back > 0) cardEvent(v,"back",back,this.time);
+        }
         for (const v of this.vehicles) if (!v.dead) settleOnGround(v, this.world, dt);
         this.updateStrikes(dt);
         updateShots(this, dt);
@@ -301,9 +316,9 @@ export class Battle {
     /** Перерыв между артударами машины, с (режим может сокращать — разведданные в битве с боссом) */
     artyCooldown(v) {
         const A = Config.ARTY;
-        if (this.mode === "range") return 5;
+        if (this.mode === "range") return 5 * v.cardFactor("arty");
         const m = this.modeCtl && this.modeCtl.artyCooldown ? this.modeCtl.artyCooldown(v) : null;
-        return m || A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT);
+        return (m || A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT)) * v.cardFactor("arty");
     }
     artyRange(v) { return (this.modeCtl && this.modeCtl.artyRange && this.modeCtl.artyRange(v)) || Config.ARTY.RANGE; }
 
@@ -322,6 +337,7 @@ export class Battle {
         const S = this.world.S;
         x = clamp(x, 4, S - 4); z = clamp(z, 4, S - 4);
         v.artyT = this.time + this.artyCooldown(v);
+        cardEvent(v,"arty",1,this.time);
         const sid = this.modeCtl && this.modeCtl.artyShell ? this.modeCtl.artyShell(v) : null;
         const def = SHELLS[sid || (v.def.nation === "ussr" ? "arty122" : "arty105")];
         const s = { x, z, team: v.team, by: v, def, t: 0, n: 0, total: A.SHELLS, r: A.SPREAD, next: A.DELAY, done: false };
@@ -380,6 +396,7 @@ export class Battle {
                     R = Math.min(R, (moving ? C.BUSH_MOVING : C.BUSH_STILL) * (1.25 - e.concealed * 0.45));
                 }
                 // глаза — на крыше башни наблюдателя, цель — верх корпуса и башня (из-за гребня видна башня)
+                R *= o.cardFactor("spot");
                 if (d < R && this.world.los(o.x, o.z, e.x, e.z, null, o.y + o.def.dims.H + o.def.turret.h, e.y + e.def.dims.H + e.def.turret.h * 0.6)) { seen = true; break; }
             }
             if (seen) e.spotT[t] = now + C.MEMORY;
@@ -459,6 +476,8 @@ export class Battle {
         for (const P of this.pilots) if (P.team === winner) P.stats.rp = Math.round(P.stats.rp * Config.RP.WIN_MULT);
         const L = this.local;
         this.result = {
+            rewardId: Date.now().toString(36) + "-" + this.seed,
+            drop: L && rollDrop(false, this.mode === "boss" && winner === L.team, L.spawns),
             win: L ? winner === L.team : false, draw: winner === -1, winner, reason, mode: this.mode,
             stats: L ? { ...L.stats } : null,
             pilots: this.pilots.map((P) => ({ id: P.id, name: P.name, team: P.team, stats: { ...P.stats }, vstats: P.vstats })),
