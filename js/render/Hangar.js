@@ -149,9 +149,7 @@ export class Hangar {
         if (!this.pointer || !this.vm || this.mode === "model" || this.drag) return null;
         const w = innerWidth, h = innerHeight;
         const nx = (this.pointer.x / w) * 2 - 1, ny = -(this.pointer.y / h) * 2 + 1;
-        this.camera.setViewOffset(w, h, -this.lastOffset * w, 0, w, h);
         this.raycaster.setFromCamera(new THREE.Vector2(nx, ny), this.camera);
-        this.camera.clearViewOffset();
         const ro = this.raycaster.ray.origin, rd = this.raycaster.ray.direction;
         const root = this.vm.root;
         root.updateWorldMatrix(true, false);
@@ -169,7 +167,7 @@ export class Hangar {
     }
 
     /** offset — сдвиг машины влево/вправо на экране, чтобы не мешали панели */
-    render(dt, offset = 0) {
+    render(dt, offset = 0, offsetY = 0, viewScale = 1) {
         const r = this.s3.renderer;
         this.idle += dt;
         // автоповорот только в обычном виде и после 5 с без касаний
@@ -177,7 +175,7 @@ export class Hangar {
         this.stand.rotation.y = this.angle;
         const w = innerWidth, h = innerHeight;
         this.camera.aspect = w / h;
-        this.camera.updateProjectionMatrix();
+        this.camera.zoom = viewScale;
         // босс крупный и высокий — камера дальше, чтобы помещался в окно осмотра
         const size = this.def ? Math.max(this.def.dims.L + this.def.gun.len * 0.5, 6) * (this.def.boss ? 1.45 : 1) : 7;
         const dist = (size * 2.3 + 5) * this.zoom;
@@ -186,13 +184,13 @@ export class Hangar {
         const lookY = this.def ? Math.max(1.1, this.def.dims.H * 0.55) : 1.1;
         this.camera.position.y += lookY - 1.1;
         this.camera.lookAt(0, lookY, 0);
-        this.lastOffset = offset;
+        this.camera.setViewOffset(w, h, -offset * w, -offsetY * h, w, h);
+        this.camera.updateMatrixWorld();
         if (this.onHover && this.mode !== "model") {
             const pk = this.pick();
             if (this.armor) this.armor.highlight(pk && pk.hit);
             this.onHover(pk, this.pointer);
         }
-        this.camera.setViewOffset(w, h, -offset * w, 0, w, h);
         r.setRenderTarget(null);
         r.render(this.scene, this.camera);
         this.camera.clearViewOffset();

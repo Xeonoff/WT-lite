@@ -47,8 +47,53 @@
 .treeDocs { display:flex; justify-content:center; gap:4px; margin-top:2px }
 .treeDocs i { display:inline-flex; align-items:center; color:var(--paper); font:600 10px var(--font-readout) }
 .tcard .treeDocs img { width:20px; height:15px; object-fit:contain }
-.hDocs { margin:10px 0; border-block:1px solid var(--line); padding:7px 0 }
-.hDocs h4 { margin:0 0 5px; color:var(--accent) }
+#hBay { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; align-items:stretch }
+#hBay #hView { min-width:0; min-height:120px }
+#hEquipment { align-self:center; width:min(100%,540px); padding:6px 8px 8px; border:1px solid #71816f66;
+    background:linear-gradient(110deg,#19231ff5,#141d19f5); box-shadow:inset 0 1px #a3b59a24,0 3px 12px #0004 }
+#hEquipment[hidden] { display:none }
+.gearRack { display:grid; gap:6px }
+.gearRack section { display:grid; grid-template-columns:48px minmax(0,1fr); gap:8px; align-items:center }
+.gearRack section + section { padding-top:6px; border-top:1px solid #aab7a322 }
+.gearRack h4 { font:600 10px var(--font-display); text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 }
+.gearRow,.gearItems { display:flex; flex-wrap:wrap; gap:4px }
+.gearTile { --ink:#738171; position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    flex:none; width:clamp(34px,3vw,43px); aspect-ratio:1; padding:2px; border:1px solid #637161; border-radius:3px;
+    background:linear-gradient(145deg,#29322c,#141c18); color:#b4bdaf; box-shadow:inset 0 0 0 2px #1017128a;
+    text-align:center; text-transform:none; letter-spacing:normal }
+.gearTile img { display:block; height:53%; max-width:91%; object-fit:contain; pointer-events:none }
+.gearTile span { max-width:100%; overflow:hidden; font:600 8px/1.1 var(--font-readout); white-space:nowrap; text-overflow:ellipsis }
+.gearTile.filled { border-color:var(--ink); background:linear-gradient(150deg,color-mix(in srgb,var(--ink) 36%,#202820),#161e19 78%);
+    box-shadow:inset 0 -2px var(--ink), inset 0 0 0 2px #141a1480; color:var(--ink) }
+.gearTile:hover,.gearTile:focus-visible,.gearTile[aria-expanded=true] { outline:1px solid var(--ink); outline-offset:1px; filter:brightness(1.17) }
+.gearTile[aria-disabled=true] { opacity:.58; cursor:default }
+.gearPicker,#gearTip { position:fixed; inset:auto; margin:0; box-sizing:border-box; border-radius:3px; background:#19221e; color:var(--paper); box-shadow:0 8px 28px #000a }
+.gearPicker { width:max-content; min-width:min(190px,94vw); max-width:min(380px,calc(100vw - 16px)); padding:10px; border:1px solid #798470 }
+.gearPicker header { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-bottom:8px; font:700 14px var(--font-display) }
+.gearPicker header button,.gearRemove { padding:4px 7px; border:1px solid #59675a; border-radius:2px;
+    background:#24302a; color:var(--paper); cursor:pointer; font:600 12px var(--font-display) }
+.gearPicker header button { width:26px; height:26px; padding:0; font-size:17px }
+.gearPicker header button:hover,.gearRemove:hover { background:#364338; border-color:var(--accent) }
+.gearItems { max-height:min(32vh,230px); overflow:auto; padding:3px; font-size:12px; color:var(--muted) }
+.gearItems .gearTile { width:64px; gap:1px }
+.gearItems .gearTile span { white-space:normal; font:600 9px/1.05 var(--font-display); max-height:2.1em }
+.gearItems .gearTile[aria-pressed=true]::after { content:"✓"; position:absolute; right:3px; top:0; color:var(--ink); font-weight:bold }
+.gearRemove { margin-top:8px }
+#gearTip { pointer-events:none; width:max-content; max-width:min(278px,calc(100vw - 16px)); padding:8px 10px; border:1px solid #657262; border-left:3px solid var(--ink) }
+#gearTip strong,#gearTip small { display:block }
+#gearTip strong { color:var(--ink); font:700 14px var(--font-display) }
+#gearTip small,#gearTip footer { color:var(--muted); font-size:10px }
+#gearTip p { margin:4px 0; font:500 12px/1.4 var(--font-ui) }
+#gearTip :empty { display:none }
+@media(max-width:980px) {
+    #hBay { grid-column:1/-1; grid-row:1 }
+    .hBody { grid-template-rows:minmax(295px,1fr) auto }
+}
+@media(max-width:620px) {
+    #hBay { order:-1; flex:none }
+    #hBay #hView { order:0; min-height:190px }
+    #hEquipment { width:100% }
+}
 .equippedDoc { display:grid; grid-template-columns:30px 1fr auto; align-items:start; gap:5px; border-left:2px solid var(--rarity); margin:4px 0; padding:4px; background:#1e2a24 }
 .equippedDoc img { width:30px; height:23px }
 .equippedDoc small,.equippedDoc b { display:block }
@@ -56,7 +101,6 @@
 .equippedDoc small,.equippedDoc p { font-size:11px; color:var(--muted); line-height:1.35; margin:2px 0 }
 .equippedDoc em { font:700 11px var(--font-readout); color:var(--accent); min-width:28px; padding-bottom:4px; text-align:center;
     background:linear-gradient(to right,var(--rarity) var(--progress,0%),var(--line) var(--progress,0%)) bottom / 100% 2px no-repeat }
-.hDocs .equippedDoc em { display:none }
 #battleDocs summary { cursor:pointer; font:600 11px var(--font-display); color:var(--accent); padding:4px 0 }
 #battleDocs summary small { float:right; color:var(--muted) }
 .battleDocList { max-height:25vh; overflow:auto }

@@ -962,12 +962,19 @@ export class Game {
             this.hangar.thumbnail(id);
         }
         let offset = this.screens.current === "menu" ? 0.2 : 0;
+        let offsetY = 0;
+        let viewScale = 1;
         if (this.screens.current === "hangarScr") {
             // машина — по центру окна осмотра между деревом и карточкой
             const r = document.getElementById("hView").getBoundingClientRect();
             offset = r.width > 0 ? (r.left + r.width / 2 - innerWidth / 2) / innerWidth : 0.045;
+            if (r.height) {
+                const modelHeight = Math.max(65,r.height - 70);
+                offsetY = (r.top + modelHeight / 2 - innerHeight / 2) / innerHeight;
+                viewScale = Math.min(1,r.width / (innerHeight * .95),modelHeight / (innerHeight * .62));
+            }
         }
-        this.hangar.render(dt, offset);
+        this.hangar.render(dt, offset, offsetY, viewScale);
     }
 
     frameBattle(dt) {

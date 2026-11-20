@@ -57,9 +57,17 @@ test("Old profile, idempotent receipt and opening, exclusive assignments and per
     assert.equal(p.assignItem(1,"t34_41","engine"),false);
     assert.ok(p.assignItem(1,"kv1","trackR"));
     assert.deepEqual(Object.keys(p.equipment()),["kv1"]);
+    assert.ok(p.assignItem(2,"t34_41","trackL"));
+    assert.equal(p.assignItem(2,"kv1","engine",{replace:true}),false);
+    assert.equal(p.equipment().kv1[0].id,1);
+    assert.ok(p.assignItem(2,"kv1","trackR",{replace:true}));
+    assert.deepEqual(Object.keys(p.equipment()),["kv1"]);
+    assert.equal(p.equipment().kv1[0].id,2);
+    assert.equal(p.data.archive[0].vehicle,null);
+    assert.equal(p.data.archive[0].slot,null);
     const {Profile:reloaded} = await import("../js/core/Profile.js?archive-reload");
     assert.deepEqual(reloaded.equipment(),p.equipment());
-    assert.ok(reloaded.unassignItem(1));
+    assert.ok(reloaded.unassignItem(2));
     assert.deepEqual(reloaded.equipment(),{});
 });
 

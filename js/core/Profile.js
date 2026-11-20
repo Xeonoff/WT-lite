@@ -70,12 +70,14 @@ export const Profile = {
         this.save();
         return item;
     },
-    assignItem(id, vehicle, slot) {
+    assignItem(id, vehicle, slot, { replace = false } = {}) {
         const item = data.archive.find(i => i.id === id);
         const def = getVehicle(vehicle);
         if (!item || item.tier === null || !def || !this.isResearched(vehicle) ||
             slotTarget(def, item.kind, slot) !== item.target) return false;
-        if (data.archive.some(i => i !== item && i.kind === item.kind && i.vehicle === vehicle && i.slot === slot)) return false;
+        const previous = data.archive.find(i => i !== item && i.kind === item.kind && i.vehicle === vehicle && i.slot === slot);
+        if (previous && !replace) return false;
+        if (previous) Object.assign(previous, { vehicle: null, slot: null });
         Object.assign(item, { vehicle, slot });
         this.save();
         return true;

@@ -21,6 +21,7 @@ export function enhanceSelect(sel) {
     btn.type = "button";
     btn.className = "dd-btn";
     btn.setAttribute("aria-haspopup", "listbox");
+    btn.setAttribute("aria-expanded", "false");
     btn.innerHTML = `<span class="dd-val"></span><i class="dd-chev"></i>`;
     const list = document.createElement("div");
     list.className = "dd-list";
@@ -38,11 +39,24 @@ export function enhanceSelect(sel) {
             const o = sel.options[sel.selectedIndex];
             btn.querySelector(".dd-val").textContent = o ? o.textContent : "";
             btn.disabled = sel.disabled;
+            if (sel.hasAttribute("aria-label")) btn.setAttribute("aria-label", sel.getAttribute("aria-label") + " · " + (o?.textContent || ""));
         },
         open() {
             closeOpen();
-            list.innerHTML = [...sel.options].map((o, i) =>
-                `<div class="dd-opt${i === sel.selectedIndex ? " on" : ""}" role="option" data-i="${i}">${o.textContent}</div>`).join("");
+            list.replaceChildren(...[...sel.options].map((option,i) => {
+                const el = document.createElement("div");
+                el.className = "dd-opt" + (i === sel.selectedIndex ? " on" : "");
+                el.dataset.i = i;
+                el.setAttribute("role","option");
+                el.setAttribute("aria-selected",String(i === sel.selectedIndex));
+                el.textContent = option.textContent;
+                if (option.dataset.detail) {
+                    const detail = document.createElement("small");
+                    detail.textContent = option.dataset.detail;
+                    el.append(detail);
+                }
+                return el;
+            }));
             document.body.append(list);
             const r = btn.getBoundingClientRect();
             list.style.minWidth = r.width + "px";
@@ -55,6 +69,7 @@ export function enhanceSelect(sel) {
             const lr = list.getBoundingClientRect();
             if (lr.right > innerWidth - 8) list.style.left = Math.max(8, innerWidth - 8 - lr.width) + "px";
             wrap.classList.add("open");
+            btn.setAttribute("aria-expanded","true");
             openDD = dd;
             hi = sel.selectedIndex;
             mark();
@@ -63,6 +78,7 @@ export function enhanceSelect(sel) {
         close() {
             list.remove();
             wrap.classList.remove("open");
+            btn.setAttribute("aria-expanded","false");
             if (openDD === dd) openDD = null;
         },
         choose(i) {

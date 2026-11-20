@@ -16,7 +16,8 @@ import { MODULE_CATEGORIES as RATTE_CATEGORIES, CREW_ROLES as RATTE_CREW, SPEC_R
 import { BOSSES } from "../data/Vehicles.js";
 import { drawMissionMap } from "./MissionMap.js";
 import { ArchiveView, archiveButtons } from "./ArchiveView.js";
-import { treeEquipment, equipmentRows } from "./Equipped.js";
+import { treeEquipment } from "./Equipped.js";
+import { HangarEquipment } from "./HangarEquipment.js";
 import { CASES } from "../data/Archive.js";
 import { archiveArt } from "./ArchiveArt.js";
 
@@ -33,6 +34,14 @@ export class Screens {
         this.game = game;
         this.sel = { mode: Profile.data.lastMode || "domination", map: Profile.data.lastMap || "random", weather: "random" };
         this.hangarSel = null;
+        this.equipment = new HangarEquipment($("hEquipment"), () => {
+            const equipped = Profile.equipment();
+            for (const el of $("tree").querySelectorAll(".tcard")) {
+                el.querySelector(".treeDocs")?.remove();
+                el.insertAdjacentHTML("beforeend",treeEquipment(getVehicle(el.dataset.v),equipped[el.dataset.v]));
+            }
+            this.olPushLineups();
+        });
         this.hangarNation = Profile.data.nation;
         this.modal = [];
         this.archive = new ArchiveView($("archiveBody"), () => {
@@ -48,6 +57,7 @@ export class Screens {
     }
 
     show(id) {
+        this.equipment.close();
         if (id !== "hangarScr") this.closeArchive();
         for (const s of SCREENS) if (!["settingsScr", "refScr"].includes(s)) $(s).classList.toggle("hidden", s !== id);
         this.current = id;
@@ -76,12 +86,14 @@ export class Screens {
         this.show(to);
     }
     hideAll() {
+        this.equipment.close();
         this.closeArchive();
         for (const s of SCREENS) if (!["settingsScr", "refScr"].includes(s)) $(s).classList.add("hidden");
         this.current = null;
         document.body.classList.remove("inMenu");
     }
     openModal(id) {
+        this.equipment.close();
         $(id).classList.remove("hidden");
         if (!this.modal.includes(id)) this.modal.push(id);
         if (id === "settingsScr") this.renderSettings();
@@ -278,6 +290,7 @@ export class Screens {
 
     renderDetail(id) {
         const v = getVehicle(id);
+        this.equipment.show(v);
         if (v.boss) { this.renderBossDetail(v); return; }
         const res = Profile.isResearched(id);
         const inL = Profile.lineup(v.nation).includes(id);
@@ -292,7 +305,6 @@ export class Screens {
         $("hDetail").innerHTML = `
             <div class="dh"><div><h2>${v.name}</h2><div class="sub">${NATIONS[v.nation].name} · ${ROLES[v.role].name} · ранг ${["", "I", "II", "III"][v.rank]} · <b>БР ${v.br.toFixed(1)}</b></div></div></div>
             <p class="desc">${v.desc}</p>
-            ${(() => { const items = Profile.equipment()[id]; return items?.length ? `<section class="hDocs"><h4>Установленные документы</h4>${equipmentRows(v,items)}</section>` : ""; })()}
             ${(() => { const st = Profile.data.vstats && Profile.data.vstats[id]; return st ? `<div class="vst">В боях: <b>${st.spawns}</b> выездов · уничтожено <b>${st.kills}</b></div>` : ""; })()}
             <canvas id="hScheme" width="680" height="260"></canvas>
             <table class="stats">
