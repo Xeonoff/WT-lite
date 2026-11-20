@@ -73,7 +73,7 @@ export class HangarEquipment {
         this.menu.setAttribute("role","dialog");
         this.tip = document.createElement("div");
         this.tip.id = "gearTip";
-        this.tip.popover = "manual";
+        this.tip.hidden = true;
         this.tip.setAttribute("role","tooltip");
         this.tip.innerHTML = "<strong></strong><small></small><p></p><footer></footer>";
         root.append(this.rack,this.menu,this.tip);
@@ -81,6 +81,7 @@ export class HangarEquipment {
             if (e.newState === "closed") {
                 this.anchor?.setAttribute("aria-expanded","false");
                 this.hideTip();
+                if (this.tip.parentElement === this.menu) this.root.append(this.tip);
             }
         });
         root.addEventListener("keydown",e=>{
@@ -112,7 +113,7 @@ export class HangarEquipment {
         this.hideTip();
     }
     hideTip() {
-        this.tip.hidePopover();
+        this.tip.hidden = true;
         this.tipOwner?.removeAttribute("aria-describedby");
         this.tipOwner = null;
     }
@@ -128,7 +129,11 @@ export class HangarEquipment {
             this.tip.style.setProperty("--ink",item ? RARITY[item.tier].color : "#babdac");
             this.tipOwner = button;
             button.setAttribute("aria-describedby","gearTip");
-            this.tip.showPopover();
+            // Фокус может вернуться к слоту во время закрытия меню. Подсказке
+            // достаточно находиться в том же слое, что и её кнопка.
+            const layer = this.menu.contains(button) ? this.menu : this.root;
+            if (this.tip.parentElement !== layer) layer.append(this.tip);
+            this.tip.hidden = false;
             const b = button.getBoundingClientRect(), t = this.tip.getBoundingClientRect();
             const left = Math.max(8,Math.min(innerWidth-t.width-8,b.left+b.width/2-t.width/2));
             this.tip.style.left = left + "px";

@@ -68,7 +68,7 @@
 .gearTile:hover,.gearTile:focus-visible,.gearTile[aria-expanded=true] { outline:1px solid var(--ink); outline-offset:1px; filter:brightness(1.17) }
 .gearTile[aria-disabled=true] { opacity:.58; cursor:default }
 .gearPicker,#gearTip { position:fixed; inset:auto; margin:0; box-sizing:border-box; border-radius:3px; background:#19221e; color:var(--paper); box-shadow:0 8px 28px #000a }
-.gearPicker { width:max-content; min-width:min(190px,94vw); max-width:min(380px,calc(100vw - 16px)); padding:10px; border:1px solid #798470 }
+.gearPicker { width:max-content; min-width:min(190px,94vw); max-width:min(380px,calc(100vw - 16px)); padding:10px; border:1px solid #798470; overflow:visible }
 .gearPicker header { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-bottom:8px; font:700 14px var(--font-display) }
 .gearPicker header button,.gearRemove { padding:4px 7px; border:1px solid #59675a; border-radius:2px;
     background:#24302a; color:var(--paper); cursor:pointer; font:600 12px var(--font-display) }
@@ -79,7 +79,7 @@
 .gearItems .gearTile span { white-space:normal; font:600 9px/1.05 var(--font-display); max-height:2.1em }
 .gearItems .gearTile[aria-pressed=true]::after { content:"✓"; position:absolute; right:3px; top:0; color:var(--ink); font-weight:bold }
 .gearRemove { margin-top:8px }
-#gearTip { pointer-events:none; width:max-content; max-width:min(278px,calc(100vw - 16px)); padding:8px 10px; border:1px solid #657262; border-left:3px solid var(--ink) }
+#gearTip { pointer-events:none; z-index:2; width:max-content; max-width:min(278px,calc(100vw - 16px)); padding:8px 10px; border:1px solid #657262; border-left:3px solid var(--ink) }
 #gearTip strong,#gearTip small { display:block }
 #gearTip strong { color:var(--ink); font:700 14px var(--font-display) }
 #gearTip small,#gearTip footer { color:var(--muted); font-size:10px }
