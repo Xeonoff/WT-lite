@@ -4,7 +4,7 @@
  */
 import { SHELLS } from "../data/Shells.js";
 
-export const PROTO_VERSION = 6;
+export const PROTO_VERSION = 7;
 export const TICK_HZ = 30;          // шаг симуляции на сервере
 export const SNAP_EVERY = 2;        // снимок состояния — каждый второй шаг (15 Гц)
 export const SNAP_HZ = TICK_HZ / SNAP_EVERY;
@@ -56,12 +56,20 @@ export function packOwn(v) {
         sh: v.shell, ld: v.loaded, mg: v.mag, r: r2(v.reload), rt: r2(v.reloadTotal),
         fi: v.fire ? { pos: rv(v.fire.pos), t: r1(v.fire.t), dur: r1(v.fire.dur) } : null,
         impact: v.impactSeq || 0,
+        levels: v.cards ? [...v.cards.entries.values()].filter(e=>e.card.stack)
+            .map(e=>[e.id,e.level,Math.floor(100*e.progress/e.card.stack.every)]) : undefined,
         ex: v.ext, mk: v.medkits, rp: v.repair ? [r2(v.repair.t), r2(v.repair.dur)] : null,
         bl: r2(v.bloom), at: v.artyT === undefined ? null : r2(v.artyT), st: r2(v.spawnT),
     };
 }
 
 export function applyOwn(v, s) {
+    for (const [id,level,percent = 0] of s.levels || []) {
+        const entry = v.cards?.entries.get(id);
+        if (!entry?.card.stack) continue;
+        entry.level = level;
+        entry.progress = entry.card.stack.every * percent / 100;
+    }
     const d = v.def;
     d.modules.forEach((m, i) => { v.mods[m.id].hp = s.m[i]; });
     // экипаж пересобираем, сохраняя объекты по индексу (на них ссылаются места)

@@ -4,6 +4,7 @@ import { uid, segCircle, segObb } from "../core/Utils.js";
 import { shellSpeed, SHELL_TYPES } from "../data/Shells.js";
 import { raycastVehicle, traceShot } from "./Armor.js";
 import { applyShellHit, heSplash } from "./Damage.js";
+import { cardEvent } from "./ArchiveEffects.js";
 
 export class Shot {
     constructor(owner, def, p, dir) {
@@ -31,7 +32,10 @@ export function updateShots(battle, dt) {
     for (let i = shots.length - 1; i >= 0; i--) {
         const s = shots[i];
         stepShot(battle, s, dt);
-        if (!s.alive) shots.splice(i, 1);
+        if (!s.alive) {
+            if (s.owner?.cards && !s.hitEnemy && !s.harmless && !s.arty) cardEvent(s.owner,"miss");
+            shots.splice(i, 1);
+        }
     }
 }
 
@@ -101,6 +105,7 @@ function resolveHit(battle, s, hit, wp) {
         const v = hit.v;
         const trace = traceShot(s.def, v, [wp[0] - s.d[0] * 0.05, wp[1] - s.d[1] * 0.05, wp[2] - s.d[2] * 0.05], s.d, 14, s.traveled);
         const res = applyShellHit(battle, s, v, trace);
+        s.hitEnemy = v.team !== s.team && res.kind !== "miss";
         battle.onShellHit(s, v, res, wp);
         if (res.kind === "rico" && res.rico) spawnRicochet(battle, s, wp, res.rico, v);
         if (isHE || res.blast) Events.emit("explosion", { x: wp[0], y: wp[1], z: wp[2], size: blastSize(s.def), inside: res.kind === "he-pen" });

@@ -44,6 +44,23 @@
 #resArchive { background:#28352d; padding:5px 10px; color:var(--muted); font-size:11px }
 #resArchive img { width:55px }
 #resArchive b { display:block; font-size:14px; color:var(--accent) }
+.treeDocs { display:flex; justify-content:center; gap:4px; margin-top:2px }
+.treeDocs i { display:inline-flex; align-items:center; color:var(--paper); font:600 10px var(--font-readout) }
+.tcard .treeDocs img { width:20px; height:15px; object-fit:contain }
+.hDocs { margin:10px 0; border-block:1px solid var(--line); padding:7px 0 }
+.hDocs h4 { margin:0 0 5px; color:var(--accent) }
+.equippedDoc { display:grid; grid-template-columns:30px 1fr auto; align-items:start; gap:5px; border-left:2px solid var(--rarity); margin:4px 0; padding:4px; background:#1e2a24 }
+.equippedDoc img { width:30px; height:23px }
+.equippedDoc small,.equippedDoc b { display:block }
+.equippedDoc b { font:700 12px var(--font-display); color:var(--rarity) }
+.equippedDoc small,.equippedDoc p { font-size:11px; color:var(--muted); line-height:1.35; margin:2px 0 }
+.equippedDoc em { font:700 11px var(--font-readout); color:var(--accent); min-width:28px; padding-bottom:4px; text-align:center;
+    background:linear-gradient(to right,var(--rarity) var(--progress,0%),var(--line) var(--progress,0%)) bottom / 100% 2px no-repeat }
+.hDocs .equippedDoc em { display:none }
+#battleDocs summary { cursor:pointer; font:600 11px var(--font-display); color:var(--accent); padding:4px 0 }
+#battleDocs summary small { float:right; color:var(--muted) }
+.battleDocList { max-height:25vh; overflow:auto }
+.crew[data-document], .mod[data-document] { box-shadow:inset 0 -2px var(--accent) }
 @media(max-width:760px){
     .hTop { flex-wrap:wrap }
     .archiveShortcut span { display:none }

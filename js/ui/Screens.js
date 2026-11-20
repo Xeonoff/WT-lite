@@ -16,6 +16,7 @@ import { MODULE_CATEGORIES as RATTE_CATEGORIES, CREW_ROLES as RATTE_CREW, SPEC_R
 import { BOSSES } from "../data/Vehicles.js";
 import { drawMissionMap } from "./MissionMap.js";
 import { ArchiveView, archiveButtons } from "./ArchiveView.js";
+import { treeEquipment, equipmentRows } from "./Equipped.js";
 import { CASES } from "../data/Archive.js";
 import { archiveArt } from "./ArchiveArt.js";
 
@@ -35,7 +36,7 @@ export class Screens {
         this.hangarNation = Profile.data.nation;
         this.modal = [];
         this.archive = new ArchiveView($("archiveBody"), () => {
-            $("archiveButtons").innerHTML = archiveButtons();
+            this.renderHangar();
             this.olPushLineups();
         });
         this.hMode = "model";
@@ -238,6 +239,7 @@ export class Screens {
             `<button class="tab ${n.id === nation ? "on" : ""}" data-act="hNation" data-v="${n.id}">${n.name}</button>`).join("") +
             `<span class="rp">Очки исследований: <b>${d.rp[nation]}</b></span>`;
         const list = vehiclesOf(nation);
+        const equipped = Profile.equipment();
         const lineup = Profile.lineup(nation);
         let html = `<div class="trow head"><div class="rk"></div>${ROLE_ORDER.map((r) => `<div class="rh">${ROLES[r].icon} ${ROLES[r].name}</div>`).join("")}</div>`;
         for (const rank of [1, 2, 3]) {
@@ -250,7 +252,7 @@ export class Screens {
                     const inL = lineup.includes(v.id);
                     const st = res ? (inL ? "в сетапе" : "исследована") : open ? Profile.cost(v.id) + " ОИ" : "закрыто";
                     return `<div class="tcard ${res ? "res" : open ? "can" : "lock"} ${inL ? "inl" : ""} ${this.hangarSel === v.id ? "on" : ""}" data-act="hSel" data-v="${v.id}">
-                        <img src="${this.game.hangar.thumbnail(v.id)}" alt=""><b>${v.name}</b><span>БР ${v.br.toFixed(1)} · ${st}</span></div>`;
+                        <img src="${this.game.hangar.thumbnail(v.id)}" alt=""><b>${v.name}</b><span>БР ${v.br.toFixed(1)} · ${st}</span>${treeEquipment(v,equipped[v.id])}</div>`;
                 }).join("") + `</div>`;
             }
             html += `</div>`;
@@ -290,6 +292,7 @@ export class Screens {
         $("hDetail").innerHTML = `
             <div class="dh"><div><h2>${v.name}</h2><div class="sub">${NATIONS[v.nation].name} · ${ROLES[v.role].name} · ранг ${["", "I", "II", "III"][v.rank]} · <b>БР ${v.br.toFixed(1)}</b></div></div></div>
             <p class="desc">${v.desc}</p>
+            ${(() => { const items = Profile.equipment()[id]; return items?.length ? `<section class="hDocs"><h4>Установленные документы</h4>${equipmentRows(v,items)}</section>` : ""; })()}
             ${(() => { const st = Profile.data.vstats && Profile.data.vstats[id]; return st ? `<div class="vst">В боях: <b>${st.spawns}</b> выездов · уничтожено <b>${st.kills}</b></div>` : ""; })()}
             <canvas id="hScheme" width="680" height="260"></canvas>
             <table class="stats">

@@ -7,6 +7,7 @@ import {
     frameToHull, dirFrameToHull, hullToFrame, dirHullToFrame, worldToHull, dirHullToWorld,
 } from "./Armor.js";
 import { modState } from "./Vehicle.js";
+import { statFactor } from "./ArchiveEffects.js";
 
 const ABSORB = { crew: 0.16, engine: 0.55, transmission: 0.5, fuel: 0.25, ammo: 0.3, breech: 0.6, drive: 0.3 };
 const EXPLOSIVE_SRC = { blast: true };
@@ -59,7 +60,7 @@ function hurtModule(ctx, m, dmg, src) {
     const v = ctx.v;
     const before = m.hp;
     const stB = modState(m);
-    m.hp = Math.max(0, m.hp - dmg);
+    m.hp = Math.max(0, m.hp - dmg * statFactor(v,"guard",m));
     const stA = modState(m);
     ctx.res.dmg.push({ id: m.id, kind: "mod", type: m.type, name: MODULE_NAMES[m.type], before, after: m.hp, max: m.maxHp });
     if (stA >= 2 && stB < 2) ctx.res.crit = true;
@@ -90,7 +91,7 @@ function hurtCrew(ctx, t, dmg) {
     const member = t.member;
     if (!member.alive || dmg <= 0.5) return;  // погибшие поглощают осколки
     const before = member.hp;
-    member.hp = Math.max(0, member.hp - dmg);
+    member.hp = Math.max(0, member.hp - dmg * statFactor(ctx.v,"guard",member));
     ctx.res.dmg.push({ id: t.id, kind: "crew", name: ctx.v.def.crewTitles[t.id], before, after: member.hp, max: member.maxHp });
     if (member.hp <= 0) {
         member.alive = false;
@@ -101,6 +102,7 @@ function hurtCrew(ctx, t, dmg) {
 }
 
 function hurtTarget(ctx, t, dmg, src) {
+    if (ctx.res.kind === "pen" || ctx.res.kind === "he-pen") dmg *= ctx.shell.insideScale || 1;
     if (t.kind === "crew") hurtCrew(ctx, t, dmg);
     else hurtModule(ctx, t.m, dmg, src);
 }

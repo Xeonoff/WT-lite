@@ -245,11 +245,11 @@ export class Vehicle {
             this.loaded = null;
             this.mag = 0;
             this.reloadTotal = this.reloadTime(sid);
-            this.reload = Math.max(this.reload, this.reloadTotal * 0.6);
+            this.reload = Math.max(this.reload, this.reloadTotal * 0.6 * this.cardFactor("change"));
         } else if (this.loaded && this.loaded !== sid) {
             if (this.reload <= 0) {
                 this.loaded = null;
-                this.reloadTotal = this.reloadTime(sid) * 0.5;
+                this.reloadTotal = this.reloadTime(sid) * 0.5 * this.cardFactor("change");
                 this.reload = this.reloadTotal;
             }
         }
@@ -261,6 +261,7 @@ export class Vehicle {
         const sid = this.loaded;
         if (!sid || !this.ammo[sid]) { this.loaded = null; return null; }
         this.ammo[sid]--;
+        this.awaitingCardReload = true;
         const g = this.def.gun;
         if (g.mag > 1) {
             this.mag--;
@@ -280,6 +281,8 @@ export class Vehicle {
         }
         const lastOfType = sid === this.shell && !this.ammo[sid];
         cardEvent(this,"shot");
+        if (this.lastFiredType && this.lastFiredType !== sid) cardEvent(this,"switchShot");
+        this.lastFiredType = sid;
         if (lastOfType) cardEvent(this,"lastRound");
         return sid;
     }
@@ -364,6 +367,8 @@ export class Vehicle {
                         Events.emit("reloaded", { v: this });
                     }
                 }
+                if (this.awaitingCardReload && this.loaded) cardEvent(this,"reload");
+                this.awaitingCardReload = false;
             }
         } else if (!this.loaded) {
             // боекомплект пополнили или поменяли тип — начинаем перезарядку
@@ -390,6 +395,7 @@ export class Vehicle {
                 target.occupant = sw.member;
                 this.swap = null;
                 Events.emit("crewSwapDone", { v: this, member: sw.member, to: sw.to });
+                cardEvent(this,"swap");
             }
             return;
         }
@@ -423,7 +429,7 @@ export class Vehicle {
         for (const id in this.mods) {
             const m = this.mods[id];
             if (m.def.aux) continue;
-            if (m.hp < m.maxHp * Config.REPAIR.RESTORE_TO - 0.01) out.push(m);
+            if (m.hp < m.maxHp * Config.REPAIR.RESTORE_TO * statFactor(this,"service",m) - 0.01) out.push(m);
         }
         return out;
     }
@@ -452,7 +458,7 @@ export class Vehicle {
         if (this.repair.t >= this.repair.dur) {
             for (const m of this.repairList()) {
                 const restored = m.type === "track" ? 0.6 : Config.REPAIR.RESTORE_TO;
-                m.hp = m.maxHp * restored;
+                m.hp = Math.min(m.maxHp, m.maxHp * restored * statFactor(this,"service",m));
                 if (m.type === "ammo") delete this.racksLost[m.id];
             }
             this.repair = null;

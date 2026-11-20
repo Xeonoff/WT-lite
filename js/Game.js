@@ -3,6 +3,7 @@ import { Events } from "./core/Events.js";
 import { Settings } from "./core/Settings.js";
 import { Profile } from "./core/Profile.js";
 import { cardFor } from "./data/ArchiveCards.js";
+import { archiveShell } from "./sim/ArchiveEffects.js";
 import { Input } from "./core/Input.js";
 import { $, clamp, angDiff } from "./core/Utils.js";
 import { SHELLS } from "./data/Shells.js";
@@ -378,6 +379,9 @@ export class Game {
             });
         });
         I.on("Enter", () => { if (this.state === "battle" && this.battle && this.battle.net && !this.screens.modalOpen) this.openChat(); });
+        I.on("KeyI", () => {
+            if (player()?.equipment.length) $("battleDocs").open = !$("battleDocs").open;
+        });
         I.on("KeyB", () => {
             const p = player();
             if (!p) return;
@@ -763,7 +767,7 @@ export class Game {
         if (hit.kind === "vehicle" && hit.v.team !== p.team && !hit.v.visible[p.team]) return;
         aim.gunRange = hit.t;
         if (hit.kind === "vehicle" && hit.v.team !== p.team) {
-            const shell = SHELLS[p.shell];
+            const shell = archiveShell(p,SHELLS[p.loaded || p.shell]);
             const tr = traceShot(shell, hit.v, origin, dir, hit.t + 2 * hit.v.def.radius, hit.t);
             const plate = tr.main || tr.layers.at(-1);
             if (plate) aim.pen = { pen: tr.pen, eff: plate.ev.eff, plate: plate.ev.info.name,

@@ -17,10 +17,10 @@ export function driveVehicle(v, dt) {
         else if (inp.throttle < 0) target = inp.throttle * v.maxReverse();
         // склон: в гору медленнее, под гору — чуть быстрее
         const up = Math.sin(v.suspension?.grade || 0) * Math.sign(target);
-        target *= clamp(1 - up * 2.6, 0.3, 1.15);
+        target *= clamp(1 - up * 2.6 / (up > 0 ? v.cardFactor("hill") : 1), 0.3, 1.15);
     }
     const acc = v.accel();
-    const brake = 7.5;
+    const brake = 7.5 * v.cardFactor("brake");
     if (!can) v.v *= Math.max(0, 1 - dt * 2.8);
     else if (target !== 0 && Math.sign(target) !== Math.sign(v.v) && Math.abs(v.v) > 0.15) v.v += clamp(target - v.v, -brake * dt, brake * dt);
     else if (Math.abs(target) > Math.abs(v.v)) v.v += clamp(target - v.v, -acc * dt, acc * dt);
@@ -40,7 +40,7 @@ export function driveVehicle(v, dt) {
     v.w += clamp(wTarget - v.w, -tr * 5 * dt - 0.01, tr * 5 * dt + 0.01);
     if (!can) v.w *= Math.max(0, 1 - dt * 6);
     v.a += v.w * dt;
-    v.slip *= Math.exp(-4 * dt);
+    v.slip *= Math.exp(-4 * dt * v.cardFactor("grip"));
     const c = Math.cos(v.a), s = Math.sin(v.a);
     v.x += (c * v.v - s * v.slip) * dt;
     v.z += (s * v.v + c * v.slip) * dt;

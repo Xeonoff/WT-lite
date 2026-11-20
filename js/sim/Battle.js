@@ -7,7 +7,7 @@ import { WEATHER, BIOME_WEATHER } from "../data/Maps.js";
 import { World } from "./World.js";
 import { readLoadout, rollDrop } from "../data/Archive.js";
 import { Vehicle } from "./Vehicle.js";
-import { cardEvent } from "./ArchiveEffects.js";
+import { archiveShell, cardEvent } from "./ArchiveEffects.js";
 import { Brain } from "./AI.js";
 import { driveVehicle, resolveCollisions, settleOnGround } from "./Physics.js";
 import { Shot, updateShots } from "./Projectiles.js";
@@ -202,7 +202,7 @@ export class Battle {
         for (const v of this.vehicles) if (v.brain && !v.dead) v.brain.update(dt);
         for (const v of this.vehicles) {
             if (v.dead) continue;
-            if (v.cards) { v.cards.startX = v.x; v.cards.startZ = v.z; }
+            if (v.cards) { v.cards.startX = v.x; v.cards.startZ = v.z; v.cards.startA = v.a; }
             driveVehicle(v, dt);
             this.aimTurret(v, dt);
             v.update(dt, this.time);
@@ -213,10 +213,25 @@ export class Battle {
             if (!v.cards || v.dead || v.cards.startX === undefined) continue;
             const dx = v.x - v.cards.startX, dz = v.z - v.cards.startZ;
             const distance = Math.hypot(dx,dz);
+            const speed = Math.abs(v.v);
+            if (speed < .3) {
+                cardEvent(v,"still",dt);
+                if (v.cards.wasMoving) cardEvent(v,"stop");
+                v.cards.countedStart = false;
+            } else if (speed >= 11/3.6 && !v.cards.countedStart) {
+                cardEvent(v,"start");
+                v.cards.countedStart = true;
+            }
+            v.cards.wasMoving = speed >= .3;
+            cardEvent(v,"turn",Math.abs(angDiff(v.a,v.cards.startA))/DEG);
             if (!distance) continue;
             cardEvent(v,"travel",distance,this.time);
+            if (speed >= 5) cardEvent(v,"fast",distance);
+            const rise = this.world.h(v.x,v.z) - this.world.h(v.cards.startX,v.cards.startZ);
+            if (rise > 0) cardEvent(v,"climb",rise);
             const back = -(dx*Math.cos(v.a) + dz*Math.sin(v.a));
             if (back > 0) cardEvent(v,"back",back,this.time);
+            if (back < -.001) cardEvent(v,"forward");
         }
         for (const v of this.vehicles) if (!v.dead) settleOnGround(v, this.world, dt);
         this.updateStrikes(dt);
@@ -251,6 +266,10 @@ export class Battle {
         const er = v.elevRate();
         const dp = clamp(this.wantPitch(v) - v.gp, -er * dt, er * dt);
         v.gp += dp;
+        if (v.cards && !this.net) {
+            cardEvent(v,"slew",Math.abs(step)/DEG);
+            cardEvent(v,"pitch",Math.abs(dp)/DEG);
+        }
     }
 
     /** Нужный угол возвышения орудия относительно башни (в пределах его углов наводки), рад */
@@ -283,10 +302,10 @@ export class Battle {
     /** Выстрел строго по оси ствола (у босса — залп из всех исправных стволов главного калибра) */
     fire(v) {
         if (!v.canFire()) return false;
+        const def = archiveShell(v,SHELLS[v.loaded]);
         const barrels = v.boss ? v.boss.salvo() : [0];
         const sid = v.consumeShot();
         if (!sid) return false;
-        const def = SHELLS[sid];
         if (barrels.length > 1) v.ammo[sid] = Math.max(0, v.ammo[sid] - (barrels.length - 1));
         let m, dir;
         for (const i of barrels) {
@@ -320,7 +339,7 @@ export class Battle {
         const m = this.modeCtl && this.modeCtl.artyCooldown ? this.modeCtl.artyCooldown(v) : null;
         return (m || A.COOLDOWN * (v.pilot ? 1 : A.BOT_MULT)) * v.cardFactor("arty");
     }
-    artyRange(v) { return (this.modeCtl && this.modeCtl.artyRange && this.modeCtl.artyRange(v)) || Config.ARTY.RANGE; }
+    artyRange(v) { return ((this.modeCtl && this.modeCtl.artyRange && this.modeCtl.artyRange(v)) || Config.ARTY.RANGE) * v.cardFactor("radioRange"); }
 
     callArtillery(v, x, z) {
         const A = Config.ARTY;
@@ -370,6 +389,7 @@ export class Battle {
 
     /* ─────────── Засвет ─────────── */
     updateSpotting() {
+        const observing = new Set();
         const C = Config.SPOT;
         const now = this.time;
         const wk = this.weather.spotK;
@@ -382,13 +402,14 @@ export class Battle {
             e.visible[e.team] = true;
             const t = 1 - e.team;
             // босс виден всегда: 11 м высоты не спрятать
-            if (e.rangeTarget || e.static || e.def.boss) { e.visible[t] = true; continue; }
+            const alwaysVisible = e.rangeTarget || e.static || e.def.boss;
             let seen = false;
+            let memory = 0;
             const fired = now - e.lastShot < C.FIRED_REVEAL;
             for (const o of this.vehicles) {
                 if (o.dead || o.team !== t) continue;
                 const d = Math.hypot(o.x - e.x, o.z - e.z);
-                if (d < C.PROXIMITY) { seen = true; break; }
+                if (seen && memory >= 1 && !o.cards) continue;
                 let R = C.RANGE * wk * (o.hasSeat("commander") && !o.seatOk("commander") ? 0.8 : 1) * (o.def.boss ? 1.6 : 1);
                 if (fired) R = 380 * Math.max(0.6, wk);
                 else if (e.concealed > 0.3) {
@@ -397,11 +418,23 @@ export class Battle {
                 }
                 // глаза — на крыше башни наблюдателя, цель — верх корпуса и башня (из-за гребня видна башня)
                 R *= o.cardFactor("spot");
-                if (d < R && this.world.los(o.x, o.z, e.x, e.z, null, o.y + o.def.dims.H + o.def.turret.h, e.y + e.def.dims.H + e.def.turret.h * 0.6)) { seen = true; break; }
+                if (d < C.PROXIMITY || (d < R && this.world.los(o.x, o.z, e.x, e.z, null, o.y + o.def.dims.H + o.def.turret.h, e.y + e.def.dims.H + e.def.turret.h * 0.6))) {
+                    seen = true;
+                    memory = Math.max(memory,o.cardFactor("memory"));
+                    if (o.cards) {
+                        observing.add(o);
+                        const contacts = o.cards.contacts ??= new Set();
+                        if (!contacts.has(e.id)) {
+                            contacts.add(e.id);
+                            cardEvent(o,"discover");
+                        }
+                    }
+                }
             }
-            if (seen) e.spotT[t] = now + C.MEMORY;
-            e.visible[t] = now < e.spotT[t];
+            if (seen) e.spotT[t] = Math.max(e.spotT[t],now + C.MEMORY * memory);
+            e.visible[t] = alwaysVisible || now < e.spotT[t];
         }
+        for (const v of observing) cardEvent(v,"observe",.25);
     }
 
     /* ─────────── Начисления ─────────── */
@@ -428,6 +461,11 @@ export class Battle {
     onShellHit(shot, v, res, wp) {
         const sh = shot.owner;
         if (sh && sh.team !== v.team) {
+            if (!shot.arty && !shot.harmless && !sh.dead && res.kind !== "miss") {
+                cardEvent(sh,"hit");
+                if (res.kind === "pen" || res.kind === "he-pen") cardEvent(sh,"pen");
+                if (res.kind === "nopen" || res.kind === "rico") cardEvent(sh,"blocked");
+            }
             sh.stats.hits++;
             if (res.kind === "pen" || res.kind === "he-pen") sh.stats.pens++;
             const P = sh.pilot;

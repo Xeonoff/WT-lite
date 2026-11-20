@@ -2,6 +2,8 @@ import { $, h, clamp, fmtTime, mkCanvas } from "../core/Utils.js";
 import { SHELLS, SHELL_TYPES, penAt } from "../data/Shells.js";
 import { CREW_SEATS, MODULE_SHORT, ROLES } from "../data/Vehicles.js";
 import { modState } from "../sim/Vehicle.js";
+import { equipmentRows, markEquipment } from "./Equipped.js";
+import { archiveShell } from "../sim/ArchiveEffects.js";
 import { drawScheme, liveSnap, STATE_COL } from "../render/Xray.js";
 
 const STATE_CLS = ["ok", "dmg", "crit", "dead"];
@@ -32,6 +34,11 @@ export class HUD {
         const p = battle.player;
         this.mmStatic = null;
         if (!p) return;
+        const docs = $("battleDocs");
+        docs.classList.toggle("hidden",!p.equipment.length);
+        docs.querySelector("summary").innerHTML = `Документы · ${p.equipment.length} <small>[I]</small>`;
+        docs.querySelector(".battleDocList").innerHTML = equipmentRows(p.def,p.equipment);
+        this.stackCells = [...docs.querySelectorAll("[data-stack]")];
         $("vpName").textContent = p.def.name;
         $("vpBR").textContent = ROLES[p.def.role].short + " · БР " + p.def.br.toFixed(1);
         const cr = $("crewRow");
@@ -40,6 +47,7 @@ export class HUD {
         for (const s of p.def.crew) {
             const el = h("div", "crew", `<i class="cdot"></i><b>${CREW_SEATS[s].short}</b><span class="chp"><i></i></span><span class="csw"></span>`);
             el.title = p.def.crewTitles[s];
+            markEquipment(el,p.def,p.equipment.filter(i=>i.slot === s));
             cr.appendChild(el);
             this.crewCells[s] = el;
         }
@@ -53,6 +61,7 @@ export class HUD {
             if (!ids.length) continue;
             const label = key === "trackL" ? "ГУС.Л" : key === "trackR" ? "ГУС.П" : MODULE_SHORT[p.mods[ids[0]].type];
             const el = h("div", "mod", `<i></i>${label}`);
+            markEquipment(el,p.def,p.equipment.filter(i=>ids.includes(i.slot)));
             mr.appendChild(el);
             this.modCells[key] = { el, ids };
         }
@@ -84,7 +93,17 @@ export class HUD {
         const p = b.player;
         $("spotted").classList.toggle("on", !!(p && !p.dead && p.visible[1 - b.playerTeam] && b.mode !== "range"));
         $("spBadge").textContent = b.mode === "range" ? "∞" : b.sp;
+        $("battleDocs").classList.toggle("hidden",!p || p.dead || !p.equipment.length);
         if (!p || p.dead || !this.crewCells) return;
+        for (const el of this.stackCells || []) {
+            const e = p.cards?.entries.get(Number(el.dataset.stack));
+            if (!e) continue;
+            const {cap,every} = e.card.stack;
+            const counter = e.level + "/" + cap;
+            if (el.textContent !== counter) el.textContent = counter;
+            const progress = e.level === cap ? 100 : Math.floor(100 * e.progress / every);
+            el.style.setProperty("--progress",progress + "%");
+        }
         // добыты трофейные снаряды — пересобрать панель снарядов
         if (p.shellIds().join() !== this.shellKey) { this.build(b); return; }
         // экипаж
@@ -146,7 +165,7 @@ export class HUD {
             const s = SHELLS[sid];
             el.classList.toggle("active", sid === p.shell);
             el.classList.toggle("empty", !p.ammo[sid]);
-            el.querySelector(".pen").textContent = s.type === "HE" ? "ОФ " + s.pen[0] + " мм" : Math.round(penAt(s, dist)) + " мм";
+            el.querySelector(".pen").textContent = (s.type === "HE" ? "ОФ " : "") + Math.round(penAt(archiveShell(p,s),dist)) + " мм";
             el.querySelector(".cnt").textContent = "×" + p.ammo[sid];
         }
         const rl = $("rFill"), rt = $("rText");
