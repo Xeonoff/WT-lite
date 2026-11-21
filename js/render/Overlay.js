@@ -190,22 +190,8 @@ export class Overlay {
             if (s.n >= s.total && s.t > s.next) continue;
             const ally = s.team === pt;
             const col = ally ? "89,180,255" : "255,90,72";
-            g.beginPath();
-            for (let i = 0; i <= 32; i++) {
-                const a = (i / 32) * Math.PI * 2;
-                const qx = s.x + Math.cos(a) * s.r, qz = s.z + Math.sin(a) * s.r;
-                const [x, y] = sc.project(qx, sc.gy(qx, qz) + 0.2, qz);
-                i ? g.lineTo(x, y) : g.moveTo(x, y);
-            }
-            g.fillStyle = `rgba(${col},.08)`;
-            g.fill();
-            g.setLineDash([8, 6]);
-            g.strokeStyle = `rgba(${col},.85)`;
-            g.lineWidth = 2;
-            g.stroke();
-            g.setLineDash([]);
             const [cx, cy, front] = sc.project(s.x, sc.gy(s.x, s.z), s.z);
-            if (!front) continue;
+            if (!(front && cx >= 0 && cy >= 0 && cx <= this.w && cy <= this.h)) continue;
             const left = Math.max(0, Config.ARTY.DELAY - s.t);
             g.font = "800 12px 'Exo 2', sans-serif";
             g.textAlign = "center";

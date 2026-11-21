@@ -215,8 +215,8 @@ export class Vehicle {
     }
 
     canFire() {
-        if (this.boss) return !this.dead && !!this.loaded && this.reload <= 0 && !this.boss.gunBroken();
-        return !this.dead && this.seatOk("gunner") && !this.gunBroken() && !!this.loaded && this.reload <= 0;
+        return !this.dead && this.reload <= 0 && this.ammo[this.loaded] > 0 &&
+            (this.boss || this.seatOk("gunner")) && !this.gunBroken();
     }
 
     totalAmmo() { let n = 0; for (const k in this.ammo) n += this.ammo[k]; return n; }
@@ -236,31 +236,36 @@ export class Vehicle {
 
     /** Выбор снаряда (игрок / ИИ) */
     selectShell(sid) {
-        if (!this.ammo[sid] && this.ammo[sid] !== 0) return false;
-        if (sid === this.shell) return false;
-        this.shell = sid;
-        const g = this.def.gun;
-        if (g.mag > 1) {
-            // смена магазина
-            this.loaded = null;
-            this.mag = 0;
-            this.reloadTotal = this.reloadTime(sid);
-            this.reload = Math.max(this.reload, this.reloadTotal * 0.6 * this.cardFactor("change"));
-        } else if (this.loaded && this.loaded !== sid) {
-            if (this.reload <= 0) {
-                this.loaded = null;
-                this.reloadTotal = this.reloadTime(sid) * 0.5 * this.cardFactor("change");
-                this.reload = this.reloadTotal;
-            }
-        }
+        if (!(this.ammo[sid] > 0) || sid === this.shell) return false;
+        const cycle = this.reload > 0 || !this.loaded ? 1 : this.def.gun.mag > 1 ? 0.6 : 0.5;
+        this.beginReload(sid, cycle * this.cardFactor("change"));
         return true;
     }
 
+    beginReload(sid, factor = 1) {
+        this.shell = sid;
+        this.loaded = null;
+        this.mag = 0;
+        this.reloadTotal = this.reloadTime(sid) * factor;
+        this.reload = this.reloadTotal;
+    }
+
+    selectRemainingAmmo() {
+        const next = this.shellIds().find(id => this.ammo[id] > 0);
+        if (next) this.beginReload(next);
+        else {
+            this.loaded = null;
+            this.mag = this.reload = 0;
+            this.awaitingCardReload = false;
+        }
+    }
+
     /** Расход выстрела. Возвращает id снаряда или null */
-    consumeShot() {
+    consumeShot(count = 1) {
         const sid = this.loaded;
         if (!sid || !this.ammo[sid]) { this.loaded = null; return null; }
-        this.ammo[sid]--;
+        if (!Number.isInteger(count) || count < 1 || count > this.ammo[sid]) return null;
+        this.ammo[sid] -= count;
         this.awaitingCardReload = true;
         const g = this.def.gun;
         if (g.mag > 1) {
@@ -284,6 +289,7 @@ export class Vehicle {
         if (this.lastFiredType && this.lastFiredType !== sid) cardEvent(this,"switchShot");
         this.lastFiredType = sid;
         if (lastOfType) cardEvent(this,"lastRound");
+        if (!this.ammo[this.shell]) this.selectRemainingAmmo();
         return sid;
     }
 
@@ -350,6 +356,11 @@ export class Vehicle {
     }
 
     updateReload(dt) {
+        if (!this.ammo[this.shell]) {
+            // Стеллаж мог быть потерян уже в процессе заряжания.
+            if (this.reload || this.loaded || this.totalAmmo()) this.selectRemainingAmmo();
+            return;
+        }
         if (this.reload > 0) {
             // без наводчика и заряжающего перезарядка не идёт; без орудия — тоже
             if (this.gunBroken()) return;
@@ -359,25 +370,16 @@ export class Vehicle {
                 this.reload = 0;
                 const g = this.def.gun;
                 if (!this.loaded) {
-                    let sid = this.shell;
-                    if (!this.ammo[sid]) sid = this.shellIds().find((s) => this.ammo[s] > 0);
-                    if (sid) {
-                        this.loaded = sid;
-                        if (g.mag > 1) this.mag = Math.min(g.mag, this.ammo[sid]);
-                        Events.emit("reloaded", { v: this });
-                    }
+                    this.loaded = this.shell;
+                    this.mag = Math.min(g.mag, this.ammo[this.shell]);
+                    Events.emit("reloaded", { v: this });
                 }
                 if (this.awaitingCardReload && this.loaded) cardEvent(this,"reload");
                 this.awaitingCardReload = false;
             }
         } else if (!this.loaded) {
             // боекомплект пополнили или поменяли тип — начинаем перезарядку
-            const sid = this.ammo[this.shell] ? this.shell : this.shellIds().find((s) => this.ammo[s] > 0);
-            if (sid) {
-                this.shell = sid;
-                this.reloadTotal = this.reloadTime(sid);
-                this.reload = this.reloadTotal;
-            }
+            this.beginReload(this.shell);
         }
     }
 

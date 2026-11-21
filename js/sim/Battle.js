@@ -303,10 +303,9 @@ export class Battle {
     fire(v) {
         if (!v.canFire()) return false;
         const def = archiveShell(v,SHELLS[v.loaded]);
-        const barrels = v.boss ? v.boss.salvo() : [0];
-        const sid = v.consumeShot();
+        const barrels = v.boss ? v.boss.salvo().slice(0,v.ammo[v.loaded]) : [0];
+        const sid = v.consumeShot(barrels.length);
         if (!sid) return false;
-        if (barrels.length > 1) v.ammo[sid] = Math.max(0, v.ammo[sid] - (barrels.length - 1));
         let m, dir;
         for (const i of barrels) {
             ({ m, dir } = this.fireLine(v, i));

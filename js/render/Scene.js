@@ -39,6 +39,7 @@ export class Scene3D {
         this.effects = new Effects(this.scene);
 
         this.vmeshes = new Map();
+        this.strikeZones = new Map();
         this.cam = { x: 0, z: 0, gy: 0, h: Config.CAMERA.HEIGHT, shake: 0, sx: 0, sz: 0 };
         this.raycaster = new THREE.Raycaster();
         this.plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -121,6 +122,7 @@ export class Scene3D {
         this.particles.clear();
         this.effects.clear();
         this.syncPickups([], 0);
+        this.syncStrikeZones([], 0);
         this.battle = null;
         this.terrain = null;
         this.particles.setTerrain(null);
@@ -221,6 +223,7 @@ export class Scene3D {
             }
         }
         if (this.weather && this.weather.precip && dt > 0) this.precip(dt);
+        this.syncStrikeZones(b.strikes, pt);
         for (const s of b.strikes) {
             if (s.n < s.total && Math.random() < dt * 9) this.particles.markerSmoke([s.x, this.gy(s.x, s.z), s.z], s.team === pt ? [0.35, 0.6, 0.95] : [0.95, 0.3, 0.2]);
         }
@@ -229,6 +232,56 @@ export class Scene3D {
         if (this.worldMesh) this.worldMesh.updatePoints(b.modeCtl.points || (b.modeCtl.point ? [{ ...b.modeCtl.point, owner: -1, cap: b.modeCtl.cap }] : null), pt, b.time);
         this.particles.update(dt);
         this.effects.update(dt);
+    }
+
+    // Геометрия остаётся на рельефе до конца удара. GPU отсекает границу по
+    // пирамиде видимости до проекции, в том числе когда камера внутри круга.
+    syncStrikeZones(strikes, playerTeam) {
+        if (!strikes.length && !this.strikeZones.size) return;
+        const active = new Set();
+        for (const s of strikes) {
+            if (s.n >= s.total && s.t > s.next) continue;
+            // В сетевой игре объекты ударов пересоздаются каждым снимком.
+            const key = [s.x,s.z,s.r,s.team].join("/");
+            active.add(key);
+            if (this.strikeZones.has(key)) continue;
+            const zone = new THREE.Group();
+            zone.position.set(s.x, 0, s.z);
+            const color = s.team === playerTeam ? 0x59b4ff : 0xff5a48;
+            const edge = Math.max(0,s.r - 0.45);
+            for (const outline of [false,true]) {
+                const geo = new THREE.RingGeometry(outline ? edge : 0, outline ? s.r : edge, 64, outline ? 1 : 4);
+                geo.rotateX(-Math.PI / 2);
+                const pos = geo.attributes.position;
+                for (let i=0; i<pos.count; i++) {
+                    pos.setY(i,this.gy(s.x + pos.getX(i), s.z + pos.getZ(i)) + 0.2);
+                }
+                if (outline) {
+                    const indices = geo.index.array;
+                    const dashes = [];
+                    for (let i=0; i<indices.length; i+=12) dashes.push(...indices.subarray(i,i+6));
+                    geo.setIndex(dashes);
+                }
+                geo.computeBoundingSphere();
+                const mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:outline ? .85 : .08,
+                    side:THREE.DoubleSide, depthWrite:false, depthTest:false, fog:false, toneMapped:false});
+                mat.forceSinglePass = true;
+                const mesh = new THREE.Mesh(geo,mat);
+                mesh.renderOrder = outline ? 5 : 4;
+                zone.add(mesh);
+            }
+            this.scene.add(zone);
+            this.strikeZones.set(key,zone);
+        }
+        for (const [key,zone] of this.strikeZones) {
+            if (active.has(key)) continue;
+            this.scene.remove(zone);
+            for (const mesh of zone.children) {
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+            }
+            this.strikeZones.delete(key);
+        }
     }
 
     /** Ящики с трофейными снарядами: ящик на земле, вращающееся кольцо и жёлтый дым-маяк */

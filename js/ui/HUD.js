@@ -177,7 +177,7 @@ export class HUD {
             rt.textContent = (g.mag > 1 && p.loaded ? "ОЧЕРЕДЬ " : "ПЕРЕЗАРЯДКА ") + p.reload.toFixed(1) + " с";
             rt.className = "";
         } else {
-            rl.style.width = "100%";
+            rl.style.width = p.loaded ? "100%" : "0%";
             rt.textContent = p.loaded ? "ГОТОВ · " + SHELLS[p.loaded].name + (g.mag > 1 ? " · " + p.mag + "/" + g.mag : "") : "НЕТ СНАРЯДОВ";
             rt.className = p.loaded ? "ok" : "bad";
         }
@@ -227,7 +227,7 @@ export class HUD {
             el.innerHTML = `<div class="wave"><span>ВОЛНА</span><b>${m.wave || "—"}</b></div><div class="winfo">${st}</div>
                 <div class="capw"><span>Высота</span><div class="bar"><i style="width:${m.cap.toFixed(0)}%"></i></div></div>`;
         } else {
-            el.innerHTML = `<div class="wave"><span>ПОЛИГОН</span><b>${m.targets}</b></div><div class="winfo">мишеней · <b>Backspace</b> — восстановить, <b>Esc</b> — меню</div>`;
+            el.innerHTML = `<div class="wave"><span>ПОЛИГОН</span><b>${m.targets}</b></div><div class="winfo">мишеней · <b>Backspace</b> — восстановить мишени и БК, <b>Esc</b> — меню</div>`;
         }
     }
 

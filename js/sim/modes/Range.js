@@ -55,11 +55,14 @@ export class RangeMode {
                 }
             }
         }
-        const p = this.b.player;
-        if (p && !p.dead && p.totalAmmo() < p.def.ammoTotal * 0.5) p.resupply(1);
     }
 
     resetTargets() {
+        const p = this.b.player;
+        if (p && !p.dead) {
+            const ammo = p.resupply(1);
+            if (ammo) Events.emit("resupply", { v: p, ammo });
+        }
         for (const slot of this.slots) {
             if (slot.v) this.b.removeVehicle(slot.v);
             this.spawnSlot(slot);

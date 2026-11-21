@@ -194,7 +194,8 @@ export class NetBattle extends Battle {
         P.stats.rp = s.P.rp;
         for (const l of P.lineup) l.used = s.P.u.includes(l.id);
         this.modeCtl.apply(s.m);
-        this.strikes = s.st.map(([x, z, team, n, total, r]) => ({ x, z, team, n, total, r }));
+        this.strikes = s.st.map(([x, z, team, n, total, r, t = Config.ARTY.DELAY, next = Infinity]) =>
+            ({ x, z, team, n, total, r, t, next }));
     }
 
     onScores(rows) {

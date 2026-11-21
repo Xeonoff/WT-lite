@@ -399,7 +399,8 @@ export class Game {
             if (Settings.get("wheel") === "shell") {
                 const p = player();
                 if (!p) return;
-                const ids = p.shellIds();
+                const ids = p.shellIds().filter(sid => p.ammo[sid] > 0);
+                if (!ids.length) return;
                 const i = ids.indexOf(p.shell);
                 this.selectShell(ids[(i + (dy > 0 ? 1 : ids.length - 1)) % ids.length]);
             } else this.zoomStep(dy < 0 ? 1 : -1);
@@ -881,7 +882,7 @@ export class Game {
             const parts = [];
             if (e.crew) parts.push("экипаж: " + CREW_SEATS[e.crew].name.toLowerCase());
             if (e.ammo) parts.push("БК +" + e.ammo);
-            if (parts.length) this.hud.log("Пополнение на точке: " + parts.join(", "), "good");
+            if (parts.length) this.hud.log("Пополнение · " + parts.join(", "), "good");
         });
         Events.on("pointChange", (e) => {
             const b = B();

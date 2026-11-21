@@ -453,7 +453,7 @@ export class Room {
         const b = this.battle;
         const M = b.modeCtl;
         const mode = M.netState();
-        const strikes = b.strikes.map((s) => [r2(s.x), r2(s.z), s.team, s.n, s.total, s.r]);
+        const strikes = b.strikes.map((s) => [r2(s.x), r2(s.z), s.team, s.n, s.total, s.r, r2(s.t), r2(s.next)]);
         for (const m of this.members.values()) {
             const P = m.pilot;
             if (!P) continue;
