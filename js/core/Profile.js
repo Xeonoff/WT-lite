@@ -1,7 +1,7 @@
 import { Settings } from "./Settings.js";
 import { Events } from "./Events.js";
 import { ALL_VEHICLES, getVehicle } from "../data/VehicleBuild.js";
-import { CASES, rollItem, slotTarget } from "../data/Archive.js";
+import { CASES, CASE_PRICE, rollItem, slotTarget } from "../data/Archive.js";
 import { CARD_POOLS, cardFor } from "../data/ArchiveCards.js";
 
 const KEY = "wtl_profile_v2";
@@ -54,19 +54,42 @@ function load() {
 
 const data = load();
 
+function addSealedCase(kind, source) {
+    const id = (data.archive.at(-1)?.id || 0) + 1;
+    data.archive.push({ id, kind, source, tier: null, vehicle: null, slot: null });
+}
+
 export const Profile = {
     data,
     receiveCase(kind, source) {
         if (!Object.hasOwn(CASES, kind) || !source || data.archive.some(i => i.source === source)) return false;
-        const id = (data.archive.at(-1)?.id || 0) + 1;
-        data.archive.push({ id, kind, source, tier: null, vehicle: null, slot: null });
+        addSealedCase(kind, source);
         this.save();
         return true;
+    },
+    buyCase(kind, nation) {
+        if (!Object.hasOwn(CASES, kind) || !Object.hasOwn(data.rp, nation)) return false;
+        const balance = data.rp[nation];
+        if (!Number.isFinite(balance) || balance < CASE_PRICE) return false;
+        data.rp[nation] = balance - CASE_PRICE;
+        addSealedCase(kind, "shop");
+        this.save();
+        return true;
+    },
+    prepareCase(id) {
+        const box = data.archive.find(i => i.id === id);
+        if (!box || box.tier !== null) return null;
+        if (!box.pending) {
+            box.pending = rollItem(box.kind);
+            this.save();
+        }
+        return box.pending;
     },
     openCase(id) {
         const item = data.archive.find(i => i.id === id);
         if (!item || item.tier !== null) return null;
-        Object.assign(item, rollItem(item.kind));
+        Object.assign(item, item.pending || rollItem(item.kind));
+        delete item.pending;
         this.save();
         return item;
     },

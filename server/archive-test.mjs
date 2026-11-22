@@ -71,6 +71,44 @@ test("Old profile, idempotent receipt and opening, exclusive assignments and per
     assert.deepEqual(reloaded.equipment(),{});
 });
 
+test("Each case costs 10,000 from the selected nation and saves sealed with the debit", async () => {
+    const db = new Map();
+    globalThis.localStorage = {getItem:k=>db.get(k),setItem:(k,v)=>db.set(k,v)};
+    const {Profile:p} = await import("../js/core/Profile.js?case-shop");
+    p.addRP("ussr",10000);
+    p.addRP("germany",9999);
+    assert.equal(p.buyCase("plan","germany"),false);
+    assert.equal(p.buyCase("unknown","ussr"),false);
+    assert.ok(p.buyCase("dossier","ussr"));
+    assert.equal(p.buyCase("dossier","ussr"),false);
+    p.addRP("germany",1);
+    assert.ok(p.buyCase("plan","germany"));
+    const {Profile:loaded} = await import("../js/core/Profile.js?case-shop-reload");
+    assert.deepEqual(loaded.data.rp,{ussr:0,germany:0});
+    assert.deepEqual(loaded.data.archive.map(i=>[i.id,i.kind,i.tier]),[[1,"dossier",null],[2,"plan",null]]);
+    assert.ok(loaded.openCase(1));
+    assert.equal(loaded.openCase(1),null);
+});
+
+test("A pending reveal survives reload without granting, duplicating or rerolling the document", async () => {
+    const db = new Map();
+    globalThis.localStorage = {getItem:k=>db.get(k),setItem:(k,v)=>db.set(k,v)};
+    const {Profile:p} = await import("../js/core/Profile.js?begin-reveal");
+    p.receiveCase("dossier","earned");
+    const preview = p.prepareCase(1);
+    assert.equal(p.data.archive[0].tier,null);
+    assert.equal(p.assignItem(1,"kv1",preview.target),false);
+    const {Profile:q} = await import("../js/core/Profile.js?resume-reveal");
+    assert.deepEqual(q.prepareCase(1),preview);
+    assert.equal(q.data.archive[0].tier,null);
+    const received = q.openCase(1);
+    for (const key of ["target","card","tier","kind"]) assert.equal(received[key],preview[key]);
+    assert.equal(received.pending,undefined);
+    assert.equal(q.openCase(1),null);
+    assert.equal(q.prepareCase(1),null);
+    assert.equal(q.data.archive.length,1);
+});
+
 test("Online match results award participants individually, including on a defeat", t => {
     t.mock.method(Math, "random", () => 0);
     const sent = [];

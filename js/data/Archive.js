@@ -1,5 +1,6 @@
 import { CARD_POOLS, cardFor } from "./ArchiveCards.js";
 export const CASES = { dossier: "Архив личных дел", plan: "Папка с чертежами" };
+export const CASE_PRICE = 10000;
 export const DROP_CHANCE = { online: 30, boss: 75 };
 export const RARITY = [
     { dossier: "Обычное", plan: "Обычный", color: "#c3c6bc", chance: 48 },

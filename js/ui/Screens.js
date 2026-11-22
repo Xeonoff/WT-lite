@@ -103,6 +103,7 @@ export class Screens {
         const id = this.modal.pop();
         if (id) $(id).classList.add("hidden");
         if (id === "archiveScr") {
+            this.archive.stopReel();
             $("hangarScr").inert = false;
             $("archiveButtons").querySelector(`[data-v="${this.archive.kind}"]`)?.focus();
         }
@@ -111,6 +112,7 @@ export class Screens {
     get modalOpen() { return this.modal.length > 0; }
     closeArchive() {
         if (!this.modal.includes("archiveScr")) return;
+        this.archive.stopReel();
         this.modal = this.modal.filter(id => id !== "archiveScr");
         $("archiveScr").classList.add("hidden");
         $("hangarScr").inert = false;

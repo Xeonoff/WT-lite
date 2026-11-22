@@ -1,5 +1,6 @@
 import { Profile } from "../core/Profile.js";
-import { CASES, DROP_CHANCE, RARITY, TARGETS, slotName, slotTarget } from "../data/Archive.js";
+import { CASES, CASE_PRICE, DROP_CHANCE, RARITY, TARGETS, rollItem, slotName, slotTarget } from "../data/Archive.js";
+import { NATIONS } from "../data/Vehicles.js";
 import { getVehicle } from "../data/VehicleBuild.js";
 import { archiveArt } from "./ArchiveArt.js";
 import { CARD_POOLS, cardFor } from "../data/ArchiveCards.js";
@@ -22,35 +23,95 @@ export class ArchiveView {
             const button = e.target.closest("[data-archive]");
             if (!button) return;
             const { archive, value } = button.dataset;
+            if (archive === "faster" && this.animation) {
+                this.animation.updatePlaybackRate(3);
+                button.disabled = true;
+                return;
+            }
+            if (this.reel) return;
+            this.stopReel();
+            this.reward = null;
+            const listY = this.root.querySelector(".stockList")?.scrollTop || 0;
             this.notice = "";
             if (archive === "kind") { this.kind = value; this.id = null; this.filter = null; }
             if (archive === "filter") this.filter = value;
             if (archive === "tab") this.catalog = value === "catalog";
             if (archive === "item") this.id = Number(value);
+            if (archive === "buy") {
+                if (Profile.buyCase(this.kind,this.nation)) {
+                    this.notice = "Куплено · " + CASES[this.kind];
+                    this.changed();
+                }
+            }
             if (archive === "open") {
-                const item = Profile.openCase(Number(value));
+                const id = Number(value);
+                const item = Profile.prepareCase(id);
                 if (item) {
-                    this.id = item.id; this.catalog = false;
-                    this.notice = "Получено · " + RARITY[item.tier][item.kind] + " · " + itemTitle(item);
+                    this.catalog = false;
+                    this.playReel(id,item);
+                    return;
                 }
             }
             if (archive === "equip" && Profile.assignItem(this.id, this.vehicle, value)) this.notice = "Установлено · " + assignment(this.selected());
             if (archive === "remove" && Profile.unassignItem(this.id)) this.notice = "Предмет возвращён на хранение";
             this.render();
-            if (["open", "equip", "remove"].includes(archive)) this.changed();
+            if (["item","equip","remove"].includes(archive)) this.root.querySelector(".stockList").scrollTop = listY;
+            if (["equip", "remove"].includes(archive)) this.changed();
         });
     }
     show(vehicle, kind) {
+        this.stopReel();
         this.vehicle = vehicle;
+        this.nation = getVehicle(vehicle).nation;
         this.kind = kind;
         this.filter = null;
         this.notice = "";
         this.id = null;
+        this.reward = null;
         this.catalog = false;
         this.render();
     }
     selected() { return Profile.data.archive.find(i => i.id === this.id); }
+    stopReel() {
+        if (this.animation) {
+            this.animation.onfinish = null;
+            this.animation.cancel();
+            this.animation = null;
+        }
+        this.reel = null;
+    }
+    finishReel() {
+        if (!this.reel) return;
+        const id = this.reel.id;
+        this.stopReel();
+        this.reward = Profile.openCase(id);
+        if (this.reward) {
+            this.id = id;
+            this.changed();
+        }
+        this.render();
+        this.root.querySelector("[data-archive=stock]")?.focus({preventScroll:true});
+    }
+    playReel(id,item) {
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const start = 4, winner = reduced ? start + 2 : 34;
+        this.reel = {id, cards:Array.from({length:winner + 6}, (_,i)=>i === winner ? item : rollItem(item.kind))};
+        this.render();
+        const strip = this.root.querySelector(".caseStrip");
+        const center = i => strip.children[i].offsetLeft + strip.children[i].offsetWidth / 2;
+        const stop = `translateX(-${center(winner)}px)`;
+        this.animation = strip.animate([
+            {transform:`translateX(-${center(start)}px)`, easing:"cubic-bezier(.16,.49,.15,1)"},
+            {transform:stop, offset:.89}, {transform:stop}
+        ],{duration:reduced ? 1200 : 4600,fill:"both"});
+        this.animation.onfinish = () => this.finishReel();
+        this.root.querySelector("[data-archive=faster]").focus({preventScroll:true});
+    }
     render() {
+        if (this.reel || this.reward) {
+            this.root.innerHTML = `<section class="caseOpening"><h3>${CASES[this.kind]}</h3>${this.reel ? this.reelHTML() : this.rewardHTML()}</section>`;
+            return;
+        }
         const all = Profile.data.archive;
         const kind = this.kind, stock = all.filter(i => i.kind === kind && i.tier === null);
         const items = all.filter(i => i.kind === kind && i.tier !== null).reverse();
@@ -65,14 +126,28 @@ export class ArchiveView {
           <section class="archiveMain">
             <div class="archiveTabs"><button data-archive="tab" data-value="stock" aria-pressed="${!this.catalog}">Хранилище · ${items.length}</button>
               <button data-archive="tab" data-value="catalog" aria-pressed="${this.catalog}">Все эффекты и шансы</button></div>
-            <div class="caseHeader"><div><h3>${CASES[kind]}</h3><small>Один документ — одна карточка</small></div>
-              <button class="big" data-archive="open" data-value="${stock[0]?.id || 0}" ${stock.length ? "" : "disabled"}>Открыть · ${stock.length}</button></div>
+            <div class="caseHeader"><div><h3>${CASES[kind]}</h3><small>${NATIONS[this.nation].name} · Баланс: ${Profile.data.rp[this.nation].toLocaleString("ru-RU")} ОИ</small></div>
+              <div class="caseActions"><button class="ghost" data-archive="buy" ${Profile.data.rp[this.nation] >= CASE_PRICE && !this.reel ? "" : "disabled"}>Купить · ${CASE_PRICE.toLocaleString("ru-RU")} ОИ</button>
+              <button class="big" data-archive="open" data-value="${stock[0]?.id || 0}" ${stock.length ? "" : "disabled"}>${stock[0]?.pending ? "Продолжить открытие" : "Открыть"} · ${stock.length}</button></div></div>
             ${this.catalog ? this.catalogHTML() : `<div class="stockBody">
               <div class="stockList scrollable">${items.map(i => `<button class="archiveItem" style="--rarity:${RARITY[i.tier].color}" data-archive="item" data-value="${i.id}" aria-pressed="${i.id===this.id}">
                 ${icon(kind,false,RARITY[i.tier].color)}<span><b>${itemTitle(i)}</b><small>${TARGETS[kind][i.target]} · ${RARITY[i.tier][kind]}</small><em>${assignment(i)}</em></span></button>`).join("") || "<p>Хранилище пусто. Здесь появятся открытые документы.</p>"}</div>
               ${item ? this.detailHTML(item) : ""}</div>`}
             <div class="archiveNotice" role="status">${this.notice}</div>
           </section>`;
+    }
+    reelHTML() {
+        const cards = this.reel.cards.map(i => `<div class="reelCard" style="--rarity:${RARITY[i.tier].color}">
+            ${icon(i.kind,false,RARITY[i.tier].color)}<b>${itemTitle(i)}</b><small>${TARGETS[i.kind][i.target]}</small></div>`).join("");
+        return `<div class="caseReel" aria-hidden="true"><div class="caseStrip">${cards}</div></div>
+            <button class="ghost" data-archive="faster">Ускорить</button>`;
+    }
+    rewardHTML() {
+        const i = this.reward, rarity = RARITY[i.tier];
+        return `<article class="caseReward" role="status" style="--rarity:${rarity.color}">
+            ${icon(i.kind,false,rarity.color)}<small>${rarity[i.kind]} · ${TARGETS[i.kind][i.target]}</small>
+            <h2>${itemTitle(i)}</h2><p>${cardFor(i).text}</p></article>
+            <button class="big" data-archive="stock">В хранилище</button>`;
     }
     catalogHTML() {
         const kind = this.kind;
